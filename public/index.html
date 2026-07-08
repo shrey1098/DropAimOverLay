@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DROP·AIM">
+<meta name="theme-color" content="#080c10">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>DROP·AIM — Live Overlay</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700;900&display=swap');
+:root{--bg:#080c10;--sf:#0d1520;--cd:#111d2b;--bd:#1a3050;--ac:#00e5ff;--gn:#00ff88;--rd:#ff3b55;--gd:#ffd700;--or:#ff7b00;--tx:#b8cfe0;--mt:#3d607a}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--tx);font-family:'Share Tech Mono',monospace;font-size:13px;overflow:hidden}
+body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
+
+/* Layout: video left, sidebar right */
+.layout{display:grid;grid-template-columns:1fr 320px;height:100vh;overflow:hidden}
+@media(max-width:900px){.layout{grid-template-columns:1fr 260px}}
+@media(max-width:600px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 200px}}
+
+/* Video pane */
+.vpane{position:relative;background:#000;overflow:hidden}
+canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:crosshair}
+.nosig{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px}
+.nosig .icon{font-size:40px;opacity:.3}
+.nosig.hide{display:none}
+
+/* HUD */
+.hud{position:absolute;z-index:20;pointer-events:none;font-size:11px;letter-spacing:1px}
+.hud.tl{top:10px;left:10px}.hud.tr{top:10px;right:10px;text-align:right}
+.hud.bl{bottom:10px;left:10px}.hud.br{bottom:10px;right:10px;text-align:right}
+.hud .lbl{color:var(--mt)}.hud .val{color:var(--ac)}.hud .vgn{color:var(--gn)}.hud .vgd{color:var(--gd)}
+
+/* Status bar */
+.sbar{display:flex;gap:6px;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
+.pill{padding:2px 7px;border:1px solid;font-size:9px;border-radius:1px}
+.pill.ok{border-color:var(--gn);color:var(--gn)}.pill.bad{border-color:var(--rd);color:var(--rd);animation:blink 1s step-end infinite}
+.pill.warn{border-color:var(--gd);color:var(--gd)}
+@keyframes blink{50%{opacity:.3}}
+
+/* Sidebar */
+.side{background:var(--sf);border-left:1px solid var(--bd);overflow-y:auto;display:flex;flex-direction:column;gap:0}
+.side::-webkit-scrollbar{width:3px}.side::-webkit-scrollbar-thumb{background:var(--bd)}
+
+/* Sections */
+.sec{border-bottom:1px solid var(--bd);flex-shrink:0}
+.sh{background:rgba(0,229,255,.05);padding:6px 10px;font-size:9px;letter-spacing:2px;color:var(--ac);border-bottom:1px solid var(--bd)}
+.sb{padding:8px 10px;display:flex;flex-direction:column;gap:7px}
+
+/* Telemetry grid */
+.tg{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.tc{background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:4px 7px}
+.tc .tl{font-size:8px;color:var(--mt);letter-spacing:1px}
+.tc .tv{font-family:'Orbitron',sans-serif;font-size:13px;color:var(--gn);line-height:1.1}
+
+/* Fields */
+.f{display:flex;flex-direction:column;gap:3px}
+.f label{font-size:9px;color:var(--mt);letter-spacing:1px;display:flex;justify-content:space-between}
+.f label span{color:var(--ac)}
+input[type=range]{-webkit-appearance:none;width:100%;height:22px;background:transparent;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--bd);border-radius:1px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--ac);margin-top:-8px;box-shadow:0 0 6px var(--ac)}
+select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:11px;padding:5px 7px;width:100%;border-radius:1px;outline:none}
+
+/* Buttons */
+.btn{width:100%;padding:8px;background:transparent;border:1px solid var(--ac);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:all .15s;touch-action:manipulation}
+.btn:active{background:var(--ac);color:var(--bg)}
+.btn-gn{border-color:var(--gn);color:var(--gn)}.btn-gn:active{background:var(--gn)}
+.btn-rd{border-color:var(--rd);color:var(--rd)}.btn-rd:active{background:var(--rd)}
+.btn-gd{border-color:var(--gd);color:var(--gd);font-size:9px}.btn-gd:active{background:var(--gd);color:var(--bg)}
+
+/* Aim result */
+.aimr{background:rgba(0,255,136,.05);border:1px solid rgba(0,255,136,.3);border-radius:2px;padding:7px 9px;font-size:10px;color:var(--gn);line-height:1.5;display:none}
+.aimr.show{display:block}
+
+/* Banner */
+.banner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;background:rgba(8,12,16,.85);border:1px solid var(--ac);padding:10px 20px;font-size:11px;color:var(--ac);letter-spacing:2px;text-align:center;pointer-events:none;transition:opacity .5s}
+.banner.hide{opacity:0}
+
+/* Horizon */
+#hzCanvas{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ══ VIDEO PANE ══ -->
+<div class="vpane">
+  <canvas id="main"></canvas>
+  <div class="nosig" id="nosig"><div class="icon">📡</div><div>NO VIDEO</div><div style="font-size:9px;color:var(--mt)">Waiting for C20 stream...</div></div>
+
+  <div class="hud tl" id="hudTL">
+    <div><span class="lbl">ROLL</span> <span class="val" id="hRoll">—</span> <span class="lbl">PITCH</span> <span class="val" id="hPitch">—</span></div>
+    <div><span class="lbl">YAW</span> <span class="val" id="hYaw">—</span> <span class="lbl">HDG</span> <span class="val" id="hHdg">—</span></div>
+  </div>
+  <div class="hud tr">
+    <div><span class="lbl">ALT</span> <span class="vgn" id="hAlt">—</span> <span class="lbl">m</span></div>
+    <div><span class="lbl">SPD</span> <span class="val" id="hSpd">—</span> <span class="lbl">m/s</span></div>
+  </div>
+  <div class="hud bl">
+    <div><span class="lbl">WIND</span> <span class="vgd" id="hWind">—</span> <span class="lbl">m/s</span> <span class="vgd" id="hWDir">—</span></div>
+    <div><span class="lbl">DRIFT</span> <span class="val" id="hDrift">—</span> <span class="lbl">m</span></div>
+  </div>
+  <div class="hud br">
+    <div><span class="lbl">TOF</span> <span class="val" id="hTOF">—</span> <span class="lbl">s</span></div>
+    <div><span class="lbl">SRC</span> <span class="val" id="hSrc" style="font-size:9px">—</span></div>
+  </div>
+  <canvas id="hzCanvas" width="140" height="60"></canvas>
+  <div class="banner" id="banner">TAP VIDEO TO MARK TARGET</div>
+</div>
+
+<!-- ══ SIDEBAR ══ -->
+<div class="side">
+  <div class="sbar">
+    <span class="pill bad" id="sVid">VIDEO ✕</span>
+    <span class="pill bad" id="sMav">MAVLINK ✕</span>
+    <span class="pill warn" id="sWind">WIND MANUAL</span>
+    <span style="margin-left:auto;color:var(--mt);font-size:8px" id="sTime">—</span>
+  </div>
+
+  <div class="sec"><div class="sh">📡 TELEMETRY</div><div class="sb">
+    <div class="tg">
+      <div class="tc"><div class="tl">ALT AGL</div><div class="tv" id="tAlt">—</div></div>
+      <div class="tc"><div class="tl">GND SPD</div><div class="tv" id="tSpd">—</div></div>
+      <div class="tc"><div class="tl">ROLL</div><div class="tv" id="tRoll">—</div></div>
+      <div class="tc"><div class="tl">PITCH</div><div class="tv" id="tPitch">—</div></div>
+      <div class="tc"><div class="tl">YAW/HDG</div><div class="tv" id="tYaw">—</div></div>
+      <div class="tc"><div class="tl">FC WIND</div><div class="tv" id="tWind">—</div></div>
+    </div>
+  </div></div>
+
+  <div class="sec"><div class="sh">🌬 WIND OVERRIDE</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">FC wind used when available.</div>
+    <div style="display:flex;gap:5px">
+      <input type="text" id="wLoc" placeholder="City" value="Jaipur" style="flex:1">
+      <button class="btn btn-gd" id="fetchW" style="width:auto;padding:4px 8px">FETCH</button>
+    </div>
+    <div class="f"><label>Speed <span id="wsL">0 m/s</span></label><input type="range" id="ws" min="0" max="20" value="0" step="0.1"></div>
+    <div class="f"><label>Direction FROM °T <span id="wdL">0°</span></label><input type="range" id="wd" min="0" max="359" value="0" step="1"></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
+    <div class="f"><label>Mass <span id="pmL">0.50 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="0.5" step="0.05"></div>
+    <div class="f"><label>Cd <span id="cdL">0.47</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.47" step="0.01"></div>
+    <div class="f"><label>Tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
+    <div class="f"><label>Area <span id="paL">0.010 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.01" step="0.001"></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">🌡 ENVIRONMENT</div><div class="sb">
+    <div class="f"><label>Temp <span id="tmpL">25°C</span></label><input type="range" id="tmp" min="-10" max="55" value="25" step="1"></div>
+    <div class="f"><label>Site elev <span id="elL">430 m</span></label><input type="range" id="el" min="0" max="5000" value="430" step="10"></div>
+    <div class="f"><label>Terrain</label><select id="tr">
+      <option value="0.03" selected>Open desert / airfield</option>
+      <option value="0.0002">Water / salt flat</option>
+      <option value="0.1">Low scrub / farmland</option>
+      <option value="0.5">Suburban / sparse trees</option>
+    </select></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">🚁 DRONE</div><div class="sb">
+    <div class="f"><label>AUW <span id="dmL">2.0 kg</span></label><input type="range" id="dm" min="0.5" max="15" value="2.0" step="0.1"></div>
+    <div class="f"><label>Frontal area <span id="daL">0.040 m²</span></label><input type="range" id="da" min="0.005" max="0.25" value="0.04" step="0.005"></div>
+    <div class="f"><label>Cd <span id="dcL">1.00</span></label><input type="range" id="dc" min="0.3" max="2.0" value="1.0" step="0.05"></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
+    <div class="f"><label>Forward <span id="cfL">0.00 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0" step="0.01"></div>
+    <div class="f"><label>Right <span id="crL">0.00 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="0" step="0.01"></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">🎯 CONTROLS</div><div class="sb">
+    <button class="btn btn-gn" id="calcBtn">⬤ CALCULATE AIM</button>
+    <button class="btn" id="clearBtn">✕ CLEAR TARGET</button>
+    <div class="aimr" id="aimR"></div>
+  </div></div>
+</div>
+</div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════════════════════════════════
+const G  = 9.80665;
+const DT = 0.005; // RK4 timestep (seconds)
+const PI = Math.PI;
+
+// ══════════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════════
+let targetMark      = null; // {x,y} canvas pixels
+let targetMarkVideo = null; // {x,y} video pixels (for tracker)
+let aimPoint        = null; // {x,y} canvas pixels
+let result          = null; // physics result
+let telemetry       = {
+  roll:0, pitch:0, yaw:0, heading:0,
+  altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
+  windSpeed:null, windDir:null,
+  videoOk:false, mavlinkOk:false,
+};
+
+// ══════════════════════════════════════════════════════════════════
+// CANVAS SETUP
+// ══════════════════════════════════════════════════════════════════
+const MC  = document.getElementById('main');
+const ctx = MC.getContext('2d', { willReadFrequently: true });
+const VC  = document.createElement('canvas'); // offscreen for video
+const vx  = VC.getContext('2d', { willReadFrequently: true });
+
+function resize() {
+  const p = MC.parentElement;
+  MC.width = p.clientWidth;
+  MC.height = p.clientHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ══════════════════════════════════════════════════════════════════
+// MJPEG STREAM → CANVAS
+// ══════════════════════════════════════════════════════════════════
+async function startStream() {
+  try {
+    const res = await fetch('/stream');
+    if(!res.ok) throw new Error('No stream');
+    document.getElementById('nosig').classList.add('hide');
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    const cat = (a,b) => { const c=new Uint8Array(a.length+b.length); c.set(a); c.set(b,a.length); return c; };
+
+    while(true) {
+      const {done,value} = await reader.read();
+      if(done) break;
+      buf = cat(buf, value);
+      let s = -1;
+      for(let i=0;i<buf.length-1;i++){
+        if(buf[i]===0xFF&&buf[i+1]===0xD8) s=i;
+        if(s!==-1&&buf[i]===0xFF&&buf[i+1]===0xD9){
+          const jpg=buf.slice(s,i+2);
+          buf=buf.slice(i+2); s=-1; i=-1;
+          await renderFrame(jpg);
+          break;
+        }
+      }
+      if(buf.length>2e6) buf=new Uint8Array(0);
+    }
+  } catch(e) {
+    document.getElementById('nosig').classList.remove('hide');
+    setTimeout(startStream, 3000);
+  }
+}
+
+async function renderFrame(jpg) {
+  try {
+    const bmp = await createImageBitmap(new Blob([jpg],{type:'image/jpeg'}));
+    VC.width=bmp.width; VC.height=bmp.height;
+    vx.drawImage(bmp,0,0);
+    bmp.close();
+
+    // Run tracker
+    if(targetMark && targetMarkVideo) {
+      const img = vx.getImageData(0,0,VC.width,VC.height);
+      const t = trackPoint(img, targetMarkVideo.x, targetMarkVideo.y);
+      if(t) {
+        targetMarkVideo.x=t.x; targetMarkVideo.y=t.y;
+        const sx=MC.width/VC.width, sy=MC.height/VC.height;
+        targetMark.x=t.x*sx; targetMark.y=t.y*sy;
+        if(telemetry.altAGL && telemetry.altAGL>0) computeAim(true);
+      }
+    }
+
+    // Draw video
+    ctx.drawImage(VC,0,0,MC.width,MC.height);
+    // Draw crosshairs on top
+    drawOverlay();
+  } catch(e) {}
+}
+
+startStream();
+
+// ══════════════════════════════════════════════════════════════════
+// PYRAMIDAL LUCAS-KANADE TRACKER
+// ══════════════════════════════════════════════════════════════════
+// 4-level pyramid, 25×25 patches, NCC template validation.
+// Handles up to ~120px displacement per frame.
+
+const LK_LEVELS=4, LK_HALF=12, LK_ITERS=25, LK_EPS=0.01, NCC_MIN=0.35;
+let prevGray=null, prevW=0, prevH=0;
+let tplGray=null, tplW=0, tplH=0;
+
+function toGray(id) {
+  const w=id.width,h=id.height,d=id.data,g=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++){const j=i*4; g[i]=0.299*d[j]+0.587*d[j+1]+0.114*d[j+2];}
+  return g;
+}
+
+function downscale(s,w,h){
+  const nw=w>>1,nh=h>>1,d=new Float32Array(nw*nh);
+  for(let y=0;y<nh;y++) for(let x=0;x<nw;x++){
+    const i=y*2*w+x*2; d[y*nw+x]=(s[i]+s[i+1]+s[i+w]+s[i+w+1])*.25;
+  }
+  return{d,w:nw,h:nh};
+}
+
+function pyramid(g,w,h){
+  const p=[{d:g,w,h}];
+  for(let i=1;i<LK_LEVELS;i++){const q=p[i-1]; p.push(downscale(q.d,q.w,q.h));}
+  return p;
+}
+
+function sam(g,w,h,x,y){
+  if(x<0||y<0||x>=w-1||y>=h-1) return 0;
+  const xi=x|0,yi=y|0,dx=x-xi,dy=y-yi,i=yi*w+xi;
+  return g[i]*(1-dx)*(1-dy)+g[i+1]*dx*(1-dy)+g[i+w]*(1-dx)*dy+g[i+w+1]*dx*dy;
+}
+
+function lkLevel(pg,cg,w,h,px,py,ivx,ivy){
+  const H=LK_HALF;
+  if(px<H+2||py<H+2||px>w-H-2||py>h-H-2) return{vx:ivx,vy:ivy};
+  const N=(2*H+1)**2;
+  const Ix=new Float32Array(N),Iy=new Float32Array(N),Ir=new Float32Array(N);
+  let k=0;
+  for(let ky=-H;ky<=H;ky++) for(let kx=-H;kx<=H;kx++){
+    const x=px+kx,y=py+ky;
+    Ix[k]=(sam(pg,w,h,x+1,y)-sam(pg,w,h,x-1,y))*.5;
+    Iy[k]=(sam(pg,w,h,x,y+1)-sam(pg,w,h,x,y-1))*.5;
+    Ir[k]=sam(pg,w,h,x,y); k++;
+  }
+  let sxx=0,sxy=0,syy=0;
+  for(let i=0;i<N;i++){sxx+=Ix[i]*Ix[i];sxy+=Ix[i]*Iy[i];syy+=Iy[i]*Iy[i];}
+  const det=sxx*syy-sxy*sxy;
+  if(Math.abs(det)<1) return{vx:ivx,vy:ivy};
+  let vvx=ivx,vvy=ivy;
+  for(let it=0;it<LK_ITERS;it++){
+    let bx=0,by=0;k=0;
+    for(let ky=-H;ky<=H;ky++) for(let kx=-H;kx<=H;kx++){
+      const dt=sam(cg,w,h,px+kx+vvx,py+ky+vvy)-Ir[k];
+      bx-=Ix[k]*dt; by-=Iy[k]*dt; k++;
+    }
+    const dx=(syy*bx-sxy*by)/det, dy=(-sxy*bx+sxx*by)/det;
+    vvx+=dx; vvy+=dy;
+    if(dx*dx+dy*dy<LK_EPS) break;
+  }
+  return{vx:vvx,vy:vvy};
+}
+
+function ncc(cg,w,h,cx,cy){
+  if(!tplGray) return 1;
+  const hw=tplW>>1,hh=tplH>>1;
+  if(cx<hw+1||cy<hh+1||cx>w-hw-1||cy>h-hh-1) return 0;
+  let sa=0,sb=0,sab=0,sa2=0,sb2=0,n=0;
+  for(let ky=-hh;ky<=hh;ky++) for(let kx=-hw;kx<=hw;kx++){
+    const a=tplGray[(ky+hh)*tplW+(kx+hw)], b=sam(cg,w,h,cx+kx,cy+ky);
+    sa+=a;sb+=b;sab+=a*b;sa2+=a*a;sb2+=b*b;n++;
+  }
+  const ma=sa/n,mb=sb/n,num=sab/n-ma*mb,den=Math.sqrt((sa2/n-ma*ma)*(sb2/n-mb*mb));
+  return den<1e-6?0:num/den;
+}
+
+function captureTpl(g,w,h,cx,cy){
+  const s=LK_HALF; tplW=2*s+1; tplH=2*s+1;
+  tplGray=new Float32Array(tplW*tplH);
+  for(let ky=-s;ky<=s;ky++) for(let kx=-s;kx<=s;kx++)
+    tplGray[(ky+s)*tplW+(kx+s)]=sam(g,w,h,cx+kx,cy+ky);
+}
+
+function trackPoint(imgData, px, py) {
+  const W=imgData.width, H=imgData.height;
+  const cg=toGray(imgData);
+  if(!prevGray||prevW!==W||prevH!==H){prevGray=cg;prevW=W;prevH=H;return{x:px,y:py};}
+  const pp=pyramid(prevGray,W,H), cp=pyramid(cg,W,H);
+  let vvx=0,vvy=0;
+  for(let lv=LK_LEVELS-1;lv>=0;lv--){
+    const sc=1<<lv;
+    const r=lkLevel(pp[lv].d,cp[lv].d,pp[lv].w,pp[lv].h,px/sc,py/sc,vvx,vvy);
+    vvx=lv>0?r.vx*2:r.vx; vvy=lv>0?r.vy*2:r.vy;
+  }
+  const nx=px+vvx, ny=py+vvy;
+  const n=ncc(cg,W,H,Math.round(nx),Math.round(ny));
+  prevGray=cg;prevW=W;prevH=H;
+  if(n<NCC_MIN||Math.abs(vvx)>200||Math.abs(vvy)>200) return null;
+  return{x:Math.max(LK_HALF,Math.min(W-LK_HALF,nx)),y:Math.max(LK_HALF,Math.min(H-LK_HALF,ny))};
+}
+
+// ══════════════════════════════════════════════════════════════════
+// PHYSICS ENGINE — RK4 DROP SIMULATION
+// ══════════════════════════════════════════════════════════════════
+//
+// SIGN CONVENTION (critical for accuracy):
+//
+// Wind direction: METEOROLOGICAL — degrees the wind is coming FROM.
+//   windDir=90° means wind blows FROM east, payload drifts WEST.
+//
+// Simulation x-axis: aligned with DOWNWIND direction.
+//   Positive x = downwind. drift output is always positive.
+//
+// World coords: dNorth, dEast = where payload lands relative to release.
+//   driftAngle = (windDir + 180) % 360 = downwind bearing.
+//   dNorth = drift * cos(driftAngle)
+//   dEast  = drift * sin(driftAngle)
+//
+// Aim offset: OPPOSITE of drift (upwind of target).
+//   aimN = -dNorth,  aimE = -dEast
+//
+// Camera frame: uses LIVE heading from MAVLink.
+//   camUp   = direction drone faces (heading)
+//   camRight= 90° clockwise from heading
+//   aimCamUp   = dot(aim, camUp)   → positive = forward on screen
+//   aimCamRight= dot(aim, camRight) → positive = right on screen
+//
+// Canvas: aimPoint.y = target.y - aimCamUp * pxPerM  (minus because canvas Y is inverted)
+//         aimPoint.x = target.x + aimCamRight * pxPerM
+
+function getEffCd(){
+  const c=parseFloat(V('cd')), t=parseFloat(V('tm'))/100;
+  return c+t*(1.1-c);
+}
+
+function getRho(altAGL){
+  const Tg=parseFloat(V('tmp')), elev=parseFloat(V('el'));
+  const R=287.058,L=0.0065,P0=101325,T0=288.15;
+  const Tsl=Tg+273.15+L*elev;
+  const Ta=Tsl-L*(elev+altAGL);
+  const Pa=P0*Math.pow(Ta/T0,5.2561);
+  return Pa/(R*Ta);
+}
+
+function windAtAlt(v10,z){
+  const z0=parseFloat(V('tr'));
+  return z<=z0?0:v10*Math.log(z/z0)/Math.log(10/z0);
+}
+
+function getWind(){
+  const fc=telemetry.windSpeed, fd=telemetry.windDir;
+  const ms=parseFloat(V('ws')), md=parseFloat(V('wd'));
+  return{
+    speed: (fc!==null&&fc>0.1)?fc:ms,
+    dir:   (fc!==null&&fc>0.1)?fd:md,
+    src:   (fc!==null&&fc>0.1)?'FC':'MANUAL',
+  };
+}
+
+function rk4Drop(h,mass,cd,area,initVx,wSpd){
+  let x=0,y=h,vvx=initVx,vy=0,t=0;
+  const acc=(vvx,vy,y)=>{
+    const rho=getRho(Math.max(0,y));
+    const wL=windAtAlt(wSpd,Math.max(0.1,y));
+    // relVx: payload velocity minus wind velocity (both in downwind direction)
+    // wind blows in +x (downwind), so relative = vx - wind
+    const rx=vvx-wL, ry=vy;
+    const sp=Math.sqrt(rx*rx+ry*ry);
+    const F=sp<1e-9?0:0.5*rho*sp*sp*cd*area;
+    return{ax:sp<1e-9?0:-F*(rx/sp)/mass, ay:-G+(sp<1e-9?0:-F*(ry/sp)/mass)};
+  };
+  while(y>0&&t<200){
+    const a1=acc(vvx,vy,y);
+    const a2=acc(vvx+a1.ax*DT/2,vy+a1.ay*DT/2,y+vy*DT/2);
+    const a3=acc(vvx+a2.ax*DT/2,vy+a2.ay*DT/2,y+(vy+a1.ay*DT/2)*DT/2);
+    const a4=acc(vvx+a3.ax*DT,vy+a3.ay*DT,y+(vy+a2.ay*DT/2)*DT);
+    vvx+=(DT/6)*(a1.ax+2*a2.ax+2*a3.ax+a4.ax);
+    vy+=(DT/6)*(a1.ay+2*a2.ay+2*a3.ay+a4.ay);
+    x+=vvx*DT; y+=vy*DT; t+=DT;
+  }
+  return{drift:x, tof:t};
+}
+
+function computeAim(silent=false){
+  if(!targetMark) return;
+
+  const height=telemetry.altAGL&&telemetry.altAGL>1?telemetry.altAGL:50;
+  const mass=parseFloat(V('pm'));
+  const cd=getEffCd();
+  const area=parseFloat(V('pa'));
+  const dMass=parseFloat(V('dm'));
+  const dArea=parseFloat(V('da'));
+  const dCd=parseFloat(V('dc'));
+  const camFwd=parseFloat(V('cf'));
+  const camRt=parseFloat(V('cr'));
+  const {speed:wSpd,dir:wDir,src:wSrc}=getWind();
+
+  // Hover tilt: drone tilts downwind to hold position
+  const rhoMid=getRho(height/2);
+  const Fd=0.5*rhoMid*wSpd*wSpd*dCd*dArea;
+  const tiltRad=Math.atan(Fd/(dMass*G));
+  // At release, payload gets small downwind kick from pendulum effect
+  const initVel=G*Math.sin(tiltRad)*0.05;
+
+  // RK4 simulation — drift is positive, in downwind direction
+  const {drift,tof}=rk4Drop(height,mass,cd,area,initVel,wSpd);
+
+  // ── COORDINATE TRANSFORM ──────────────────────────────────────
+  // Convert downwind drift to North/East world coordinates
+  //
+  // windDir is FROM direction (meteorological).
+  // Payload drifts in the OPPOSITE direction (downwind).
+  // downwindBearing = (windDir + 180) % 360
+  const downwindRad=((wDir+180)%360)*PI/180;
+  const dNorth=drift*Math.cos(downwindRad); // payload displacement N
+  const dEast =drift*Math.sin(downwindRad); // payload displacement E
+
+  // Aim point = UPWIND of target (opposite of drift)
+  // Camera offset: forward/right in body frame, rotated by heading
+  const hdg=telemetry.heading||0;
+  const hdgRad=hdg*PI/180;
+  const camOffN=camFwd*Math.cos(hdgRad)-camRt*Math.sin(hdgRad);
+  const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
+
+  // Aim vector in world coords (from target to where drone should be)
+  const aimN=-dNorth-camOffN;  // upwind + camera offset
+  const aimE=-dEast -camOffE;
+
+  // ── PROJECT TO CAMERA FRAME ───────────────────────────────────
+  // Camera up = heading direction (what's "forward" for the drone)
+  // Camera right = 90° clockwise from heading
+  const camUpN=Math.cos(hdgRad),     camUpE=Math.sin(hdgRad);
+  const camRtN=Math.cos(hdgRad+PI/2),camRtE=Math.sin(hdgRad+PI/2);
+
+  const aimCamUp =aimN*camUpN +aimE*camUpE;  // metres forward in camera
+  const aimCamRt =aimN*camRtN +aimE*camRtE;  // metres right in camera
+
+  // ── CONVERT TO CANVAS PIXELS ──────────────────────────────────
+  // C20 ~90° HFOV → ground width at height h = 2*h*tan(45°) = 2h
+  const pxPerM=MC.width/(2*height);
+
+  aimPoint={
+    x: targetMark.x + aimCamRt * pxPerM,      // right = +x
+    y: targetMark.y - aimCamUp * pxPerM,       // forward = -y (canvas Y inverted)
+  };
+
+  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
+
+  // Update HUD
+  E('hDrift').textContent=drift.toFixed(1);
+  E('hTOF').textContent=tof.toFixed(1);
+  E('hWind').textContent=wSpd.toFixed(1);
+  E('hWDir').textContent=wDir.toFixed(0)+'°';
+  E('hSrc').textContent=wSrc;
+
+  updateResult();
+  if(!silent) hideBanner();
+}
+
+// ══════════════════════════════════════════════════════════════════
+// DRAW OVERLAY — THREE CROSSHAIRS + GUIDANCE
+// ══════════════════════════════════════════════════════════════════
+function drawOverlay(){
+  const W=MC.width, H=MC.height;
+  const cx=W/2, cy=H/2;
+
+  // 🔵 BLUE — Camera center (always at screen center)
+  drawCameraXhair(cx,cy);
+
+  if(!targetMark&&!aimPoint) return;
+
+  // 🔴 RED — Target (tracked)
+  if(targetMark) drawXhair(targetMark.x,targetMark.y,'#ff3b55',22,'TARGET');
+
+  if(aimPoint&&targetMark){
+    // Drift line: red → green (shows drift path)
+    ctx.strokeStyle='rgba(255,59,85,.3)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(targetMark.x,targetMark.y);ctx.lineTo(aimPoint.x,aimPoint.y);ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Guidance: blue → green
+    const dx=aimPoint.x-cx, dy=aimPoint.y-cy;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+
+    if(dist>8&&result){
+      // Arrow from blue to green
+      ctx.strokeStyle='rgba(0,229,255,.6)';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
+      ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(aimPoint.x,aimPoint.y);ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Arrowhead
+      const a=Math.atan2(dy,dx);
+      ctx.fillStyle='rgba(0,229,255,.7)';ctx.beginPath();
+      ctx.moveTo(aimPoint.x,aimPoint.y);
+      ctx.lineTo(aimPoint.x-9*Math.cos(a-.4),aimPoint.y-9*Math.sin(a-.4));
+      ctx.lineTo(aimPoint.x-9*Math.cos(a+.4),aimPoint.y-9*Math.sin(a+.4));
+      ctx.closePath();ctx.fill();
+
+      // Error distance pill
+      const errM=dist/result.pxPerM;
+      const mx=(cx+aimPoint.x)/2, my=(cy+aimPoint.y)/2;
+      ctx.fillStyle='rgba(0,229,255,.12)';ctx.strokeStyle='rgba(0,229,255,.4)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.roundRect(mx-40,my-12,80,18,3);ctx.fill();ctx.stroke();
+      ctx.fillStyle='#00e5ff';ctx.font='bold 10px Share Tech Mono';ctx.textAlign='center';
+      ctx.fillText(errM.toFixed(1)+'m off',mx,my);ctx.textAlign='left';
+
+      // Direction cue
+      const dH=dx>0?'→R':'←L', dV=dy>0?'↓D':'↑U';
+      const mH=Math.abs(dx/result.pxPerM).toFixed(1), mV=Math.abs(dy/result.pxPerM).toFixed(1);
+      ctx.fillStyle='rgba(0,229,255,.6)';ctx.font='9px Share Tech Mono';ctx.textAlign='center';
+      ctx.fillText(`${mH}m ${dH}  ${mV}m ${dV}`,aimPoint.x,aimPoint.y+34);ctx.textAlign='left';
+
+    } else if(result&&dist/result.pxPerM<0.5){
+      // ALIGNED flash
+      ctx.fillStyle='rgba(0,255,136,.15)';ctx.beginPath();ctx.arc(cx,cy,35,0,PI*2);ctx.fill();
+      ctx.fillStyle='#00ff88';ctx.font='bold 11px Share Tech Mono';ctx.textAlign='center';
+      ctx.fillText('✓ ALIGNED — DROP',cx,cy+48);ctx.textAlign='left';
+    }
+
+    // Scale bar (1m)
+    if(result){
+      const bx=18,by=MC.height-40,bp=result.pxPerM;
+      ctx.strokeStyle='rgba(255,255,255,.4)';ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(bx+bp,by);
+      ctx.moveTo(bx,by-3);ctx.lineTo(bx,by+3);
+      ctx.moveTo(bx+bp,by-3);ctx.lineTo(bx+bp,by+3);ctx.stroke();
+      ctx.fillStyle='rgba(255,255,255,.5)';ctx.font='9px Share Tech Mono';
+      ctx.fillText('1m',bx+bp/2-8,by-7);
+
+      // Drift label on red→green line
+      const lx=(aimPoint.x+targetMark.x)/2, ly=(aimPoint.y+targetMark.y)/2;
+      ctx.fillStyle='rgba(255,59,85,.6)';ctx.font='9px Share Tech Mono';
+      ctx.fillText('drift '+result.drift.toFixed(1)+'m',lx+5,ly-3);
+    }
+
+    // 🟢 GREEN — Aim point (draw last, on top)
+    drawXhair(aimPoint.x,aimPoint.y,'#00ff88',18,'AIM HERE');
+  }
+
+  drawHz();
+}
+
+function drawXhair(x,y,col,sz,lbl){
+  ctx.beginPath();ctx.arc(x,y,sz,0,PI*2);ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.globalAlpha=.6;ctx.stroke();ctx.globalAlpha=1;
+  ctx.beginPath();ctx.arc(x,y,3.5,0,PI*2);ctx.fillStyle=col;ctx.shadowBlur=8;ctx.shadowColor=col;ctx.fill();ctx.shadowBlur=0;
+  ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.beginPath();
+  ctx.moveTo(x-sz*1.4,y);ctx.lineTo(x-sz*.4,y);ctx.moveTo(x+sz*.4,y);ctx.lineTo(x+sz*1.4,y);
+  ctx.moveTo(x,y-sz*1.4);ctx.lineTo(x,y-sz*.4);ctx.moveTo(x,y+sz*.4);ctx.lineTo(x,y+sz*1.4);ctx.stroke();
+  ctx.fillStyle=col;ctx.font='bold 9px Share Tech Mono';ctx.fillText(lbl,x+sz+5,y+3);
+}
+
+function drawCameraXhair(cx,cy){
+  const s=26,c='#00aaff';
+  ctx.beginPath();ctx.arc(cx,cy,s,0,PI*2);ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.globalAlpha=.7;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;
+  ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.globalAlpha=.8;ctx.beginPath();
+  ctx.moveTo(cx-s*1.7,cy);ctx.lineTo(cx-5,cy);ctx.moveTo(cx+5,cy);ctx.lineTo(cx+s*1.7,cy);
+  ctx.moveTo(cx,cy-s*1.7);ctx.lineTo(cx,cy-5);ctx.moveTo(cx,cy+5);ctx.lineTo(cx,cy+s*1.7);ctx.stroke();ctx.globalAlpha=1;
+  ctx.beginPath();ctx.arc(cx,cy,2.5,0,PI*2);ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.stroke();
+  ctx.fillStyle=c;ctx.font='8px Share Tech Mono';ctx.fillText('CAMERA',cx+s+3,cy-4);ctx.fillText('CENTER',cx+s+3,cy+6);
+}
+
+function drawHz(){
+  const hc=document.getElementById('hzCanvas').getContext('2d');
+  const W=140,H=60; hc.clearRect(0,0,W,H);
+  const r=telemetry.roll||0, p=telemetry.pitch||0;
+  hc.save();hc.translate(W/2,H/2);hc.rotate(r*PI/180);
+  const pp=p*1.2;
+  hc.fillStyle='rgba(0,60,120,.4)';hc.fillRect(-W/2,-H/2+pp,W,H/2);
+  hc.fillStyle='rgba(80,50,20,.4)';hc.fillRect(-W/2,pp,W,H/2);
+  hc.strokeStyle='#fff';hc.lineWidth=1.5;hc.beginPath();hc.moveTo(-W/2,pp);hc.lineTo(W/2,pp);hc.stroke();
+  hc.restore();
+  hc.strokeStyle='#fff';hc.lineWidth=1.5;hc.beginPath();
+  hc.moveTo(W/2-10,H/2);hc.lineTo(W/2-3,H/2);hc.moveTo(W/2+3,H/2);hc.lineTo(W/2+10,H/2);
+  hc.moveTo(W/2,H/2-3);hc.lineTo(W/2,H/2-8);hc.stroke();
+  hc.strokeStyle='rgba(255,255,255,.2)';hc.lineWidth=1;hc.strokeRect(0,0,W,H);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TAP + BUTTONS
+// ══════════════════════════════════════════════════════════════════
+MC.addEventListener('click', e => {
+  const r=MC.getBoundingClientRect();
+  const cx=e.clientX-r.left, cy=e.clientY-r.top;
+  targetMark={x:cx,y:cy};
+  const sx=VC.width/MC.width, sy=VC.height/MC.height;
+  targetMarkVideo={x:cx*sx,y:cy*sy};
+
+  // Capture template + reset tracker
+  const img=vx.getImageData(0,0,VC.width,VC.height);
+  const g=toGray(img);
+  captureTpl(g,VC.width,VC.height,Math.round(targetMarkVideo.x),Math.round(targetMarkVideo.y));
+  prevGray=g; prevW=VC.width; prevH=VC.height;
+
+  aimPoint=null;
+  if(telemetry.altAGL&&telemetry.altAGL>1) computeAim(); else hideBanner(2000);
+});
+
+E('calcBtn').addEventListener('click',()=>computeAim());
+E('clearBtn').addEventListener('click',()=>{
+  targetMark=null;targetMarkVideo=null;aimPoint=null;result=null;prevGray=null;tplGray=null;
+  E('aimR').classList.remove('show');
+  showBanner('TAP VIDEO TO MARK TARGET');
+});
+
+// ══════════════════════════════════════════════════════════════════
+// TELEMETRY WEBSOCKET
+// ══════════════════════════════════════════════════════════════════
+function connectTelem(){
+  const ws=new WebSocket('ws://localhost:3000/telemetry');
+  ws.onopen=()=>console.log('[TELEM] Connected');
+  ws.onmessage=e=>{try{
+    const d=JSON.parse(e.data);
+    telemetry={...telemetry,...d};
+    updateHUD();updateStatus();
+    if(targetMark&&d.altAGL&&d.altAGL>0) computeAim(true);
+  }catch(e){}};
+  ws.onclose=()=>setTimeout(connectTelem,2000);
+  ws.onerror=()=>ws.close();
+}
+connectTelem();
+
+// ══════════════════════════════════════════════════════════════════
+// WIND FETCH
+// ══════════════════════════════════════════════════════════════════
+E('fetchW').addEventListener('click', async()=>{
+  const q=V('wLoc').trim(); if(!q) return;
+  try{
+    const geo=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&format=json`).then(r=>r.json());
+    if(!geo.results?.length) return;
+    const{latitude:lat,longitude:lon,name}=geo.results[0];
+    const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&forecast_days=1`).then(r=>r.json());
+    const s=w.current.wind_speed_10m, d=Math.round(w.current.wind_direction_10m);
+    S('ws',s);S('wd',d);E('wsL').textContent=s.toFixed(1)+' m/s';E('wdL').textContent=d+'°';
+    E('sWind').textContent='WIND '+name;E('sWind').className='pill ok';
+  }catch(e){}
+});
+
+// ══════════════════════════════════════════════════════════════════
+// SLIDER BINDINGS + HELPERS
+// ══════════════════════════════════════════════════════════════════
+function E(id){return document.getElementById(id)}
+function V(id){return E(id).value}
+function S(id,v){E(id).value=v}
+
+function bind(id,lbl,fmt){const el=E(id),lb=E(lbl);const u=()=>{lb.textContent=fmt(parseFloat(el.value))};el.addEventListener('input',u);u();}
+bind('ws','wsL',v=>v.toFixed(1)+' m/s');
+bind('wd','wdL',v=>v.toFixed(0)+'°');
+bind('pm','pmL',v=>v.toFixed(2)+' kg');
+bind('cd','cdL',v=>v.toFixed(2));
+bind('tm','tmL',v=>v.toFixed(0)+'%');
+bind('pa','paL',v=>v.toFixed(3)+' m²');
+bind('tmp','tmpL',v=>v.toFixed(0)+'°C');
+bind('el','elL',v=>v.toFixed(0)+' m');
+bind('dm','dmL',v=>v.toFixed(1)+' kg');
+bind('da','daL',v=>v.toFixed(3)+' m²');
+bind('dc','dcL',v=>v.toFixed(2));
+bind('cf','cfL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
+bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
+
+function updateHUD(){
+  const f=(v,d=1)=>v!==null&&v!==undefined?v.toFixed(d):'—';
+  E('hRoll').textContent=f(telemetry.roll)+'°';
+  E('hPitch').textContent=f(telemetry.pitch)+'°';
+  E('hYaw').textContent=f(telemetry.yaw)+'°';
+  E('hHdg').textContent=f(telemetry.heading)+'°';
+  E('hAlt').textContent=f(telemetry.altAGL,0);
+  E('hSpd').textContent=f(telemetry.groundspeed);
+  E('tAlt').textContent=f(telemetry.altAGL,0)+' m';
+  E('tSpd').textContent=f(telemetry.groundspeed)+' m/s';
+  E('tRoll').textContent=f(telemetry.roll)+'°';
+  E('tPitch').textContent=f(telemetry.pitch)+'°';
+  E('tYaw').textContent=f(telemetry.heading)+'°';
+  E('tWind').textContent=telemetry.windSpeed!==null?telemetry.windSpeed.toFixed(1)+' m/s '+telemetry.windDir?.toFixed(0)+'°':'N/A';
+  E('sTime').textContent=new Date().toLocaleTimeString();
+  drawHz();
+}
+
+function updateStatus(){
+  const v=E('sVid'),m=E('sMav');
+  v.textContent=telemetry.videoOk?'VIDEO ✓':'VIDEO ✕';v.className='pill '+(telemetry.videoOk?'ok':'bad');
+  m.textContent=telemetry.mavlinkOk?'MAVLINK ✓':'MAVLINK ✕';m.className='pill '+(telemetry.mavlinkOk?'ok':'bad');
+}
+
+function updateResult(){
+  if(!result) return;
+  const b=E('aimR');b.classList.add('show');
+  b.innerHTML=`<b>⬤ FLY 🔵 ONTO 🟢 → DROP</b><br>
+    Drift: ${result.drift.toFixed(2)}m  TOF: ${result.tof.toFixed(2)}s<br>
+    Alt: ${result.height.toFixed(0)}m  Tilt: ${result.tiltDeg.toFixed(1)}°<br>
+    Wind: ${result.wSpd.toFixed(1)}m/s ${result.wDir.toFixed(0)}° [${result.wSrc}]`;
+}
+
+function showBanner(msg){const b=E('banner');b.textContent=msg;b.classList.remove('hide');}
+function hideBanner(d=0){setTimeout(()=>E('banner').classList.add('hide'),d);}
+
+new ResizeObserver(resize).observe(MC.parentElement);
+
+// ══════════════════════════════════════════════════════════════════
+// SERVICE WORKER (offline support)
+// ══════════════════════════════════════════════════════════════════
+if('serviceWorker' in navigator){
+  const sw=`self.addEventListener('install',e=>{self.skipWaiting()});
+self.addEventListener('activate',e=>{self.clients.claim()});
+self.addEventListener('fetch',e=>{
+  if(e.request.url.includes('/stream')||e.request.url.includes('/telemetry')) return;
+  e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(resp=>{
+    const c=resp.clone();caches.open('dropaim-v1').then(cache=>cache.put(e.request,c));
+    return resp;
+  }).catch(()=>caches.match(e.request))));
+});`;
+  const b=new Blob([sw],{type:'text/javascript'});
+  navigator.serviceWorker.register(URL.createObjectURL(b)).catch(()=>{});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "DROP·AIM Live Overlay",
+  "short_name": "DROP·AIM",
+  "description": "Drone payload drop aim point calculator with live video overlay",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#080c10",
+  "theme_color": "#080c10",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
