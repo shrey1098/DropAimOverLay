@@ -184,6 +184,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <div style="font-size:9px;color:var(--mt);line-height:1.4">LOCK holds position (BRAKE) — enabled only when 🔵 is on 🟢. UNLOCK returns to LOITER.</div>
     <button class="btn btn-rd" id="lockBtn" disabled style="opacity:.4">🔒 LOCK — ALIGN FIRST</button>
     <button class="btn btn-gd" id="unlockBtn">🔓 UNLOCK → LOITER</button>
+    <button class="btn btn-rd" id="rtlBtn" style="margin-top:4px">🏠 RTL — RETURN HOME</button>
     <div style="font-size:9px;color:var(--mt);text-align:center">MODE <span id="mMode" style="color:var(--ac)">—</span></div>
   </div></div>
 </div>
@@ -746,6 +747,12 @@ E('lockBtn').addEventListener('click',()=>{
 E('unlockBtn').addEventListener('click',()=>{
   sendMode('LOITER');
   showBanner('🔓 UNLOCKED — LOITER'); hideBanner(1500);
+});
+E('rtlBtn').addEventListener('click',()=>{
+  // RTL flies the aircraft home autonomously — require an explicit confirm
+  if(!confirm('RTL: the drone will fly HOME autonomously. Continue?')) return;
+  sendMode('RTL');
+  showBanner('🏠 RTL — RETURNING HOME'); hideBanner(2000);
 });
 
 // ══════════════════════════════════════════════════════════════════

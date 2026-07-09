@@ -95,7 +95,7 @@ app.get('/api/status', (req, res) => {
 
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.
 app.use(express.json());
-const ALLOWED_MODES = { BRAKE:17, LOITER:5 };
+const ALLOWED_MODES = { BRAKE:17, LOITER:5, RTL:6 };
 app.post('/api/mode', (req, res) => {
   const name = (req.body && req.body.mode || '').toUpperCase();
   const cm = ALLOWED_MODES[name];
