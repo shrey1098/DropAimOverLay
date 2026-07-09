@@ -179,6 +179,13 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <button class="btn" id="clearBtn">✕ CLEAR TARGET</button>
     <div class="aimr" id="aimR"></div>
   </div></div>
+
+  <div class="sec"><div class="sh">🔒 POSITION LOCK</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">LOCK holds position (BRAKE) — enabled only when 🔵 is on 🟢. UNLOCK returns to LOITER.</div>
+    <button class="btn btn-rd" id="lockBtn" disabled style="opacity:.4">🔒 LOCK — ALIGN FIRST</button>
+    <button class="btn btn-gd" id="unlockBtn">🔓 UNLOCK → LOITER</button>
+    <div style="font-size:9px;color:var(--mt);text-align:center">MODE <span id="mMode" style="color:var(--ac)">—</span></div>
+  </div></div>
 </div>
 </div>
 
@@ -191,6 +198,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 const G  = 9.80665;
 const DT = 0.005; // RK4 timestep (seconds)
 const PI = Math.PI;
+const ALIGN_LOCK_M = 0.5; // 🔵–🟢 offset (metres) under which LOCK is allowed; tune to taste
 
 // ══════════════════════════════════════════════════════════════════
 // STATE
@@ -563,6 +571,15 @@ function drawOverlay(){
   // 🔵 BLUE — Camera center (always at screen center)
   drawCameraXhair(cx,cy);
 
+  // Alignment state (blue camera-center on green aim point) gates the LOCK button.
+  // Recomputed every frame; reset here and set below when a valid aim exists.
+  let alignedNow=false;
+  if(aimPoint&&result){
+    const adx=aimPoint.x-cx, ady=aimPoint.y-cy;
+    alignedNow = Math.sqrt(adx*adx+ady*ady)/result.pxPerM < ALIGN_LOCK_M;
+  }
+  setAligned(alignedNow);
+
   if(!targetMark&&!aimPoint) return;
 
   // 🔴 RED — Target (tracked)
@@ -702,6 +719,36 @@ E('clearBtn').addEventListener('click',()=>{
 });
 
 // ══════════════════════════════════════════════════════════════════
+// POSITION LOCK (BRAKE) / UNLOCK (LOITER)
+// ══════════════════════════════════════════════════════════════════
+let isAligned=false;
+function setAligned(a){
+  if(a===isAligned) return;           // only touch the DOM on change
+  isAligned=a;
+  const b=E('lockBtn');
+  b.disabled=!a;
+  b.style.opacity=a?'1':'.4';
+  b.textContent=a?'🔒 LOCK POSITION':'🔒 LOCK — ALIGN FIRST';
+}
+async function sendMode(mode){
+  try{
+    const r=await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const j=await r.json();
+    if(!j.ok){ showBanner('CMD FAILED: '+(j.err||'error')); hideBanner(2500); }
+    return j.ok;
+  }catch(e){ showBanner('CMD FAILED: no server'); hideBanner(2500); return false; }
+}
+E('lockBtn').addEventListener('click',()=>{
+  if(E('lockBtn').disabled) return;   // guard: only when aligned
+  sendMode('BRAKE');
+  showBanner('🔒 LOCKING — BRAKE'); hideBanner(1500);
+});
+E('unlockBtn').addEventListener('click',()=>{
+  sendMode('LOITER');
+  showBanner('🔓 UNLOCKED — LOITER'); hideBanner(1500);
+});
+
+// ══════════════════════════════════════════════════════════════════
 // TELEMETRY WEBSOCKET
 // ══════════════════════════════════════════════════════════════════
 function connectTelem(){
@@ -777,6 +824,12 @@ function updateHUD(){
   E('tYaw').textContent=f(telemetry.heading)+'°';
   E('tWind').textContent=telemetry.windSpeed!==null?telemetry.windSpeed.toFixed(1)+' m/s '+telemetry.windDir?.toFixed(0)+'°':'N/A';
   E('sTime').textContent=new Date().toLocaleTimeString();
+  // Flight-mode readout + LOCKED highlight when the FC reports BRAKE
+  const md=telemetry.mode||'—', locked=md==='BRAKE';
+  const mEl=E('mMode');
+  mEl.textContent=md;
+  mEl.style.color=locked?'var(--rd)':'var(--ac)';
+  E('lockBtn').textContent=locked?'🔒 LOCKED (BRAKE)':(isAligned?'🔒 LOCK POSITION':'🔒 LOCK — ALIGN FIRST');
   drawHz();
 }
 
