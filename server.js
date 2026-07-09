@@ -180,7 +180,7 @@ function parseMav(buf) {
         mavState.latest.heading=d.getUint16(26,true)*0.01;
         mavState.latest.groundspeed=Math.sqrt(mavState.latest.vx**2+mavState.latest.vy**2);
       }else if(id===168&&pl>=12){
-        mavState.latest.windDir=((d.getFloat32(0,true)*180/Math.PI)+360)%360;
+        mavState.latest.windDir=((d.getFloat32(0,true)%360)+360)%360;
         mavState.latest.windSpeed=d.getFloat32(4,true);
       }
     }catch(e){}

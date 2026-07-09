@@ -163,12 +163,12 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">🚁 DRONE</div><div class="sb">
-    <div class="f"><label>AUW <span id="dmL">2.0 kg</span></label><input type="range" id="dm" min="0.5" max="15" value="2.0" step="0.1"></div>
-    <div class="f"><label>Frontal area <span id="daL">0.040 m²</span></label><input type="range" id="da" min="0.005" max="0.25" value="0.04" step="0.005"></div>
-    <div class="f"><label>Cd <span id="dcL">1.00</span></label><input type="range" id="dc" min="0.3" max="2.0" value="1.0" step="0.05"></div>
+    <div class="f"><label>AUW <span id="dmL">28.0 kg</span></label><input type="range" id="dm" min="0.5" max="40" value="28" step="0.1"></div>
+    <div class="f"><label>Frontal area <span id="daL">0.250 m²</span></label><input type="range" id="da" min="0.005" max="0.5" value="0.25" step="0.005"></div>
   </div></div>
 
   <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
+    <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="1" max="30" value="22" step="1"></div>
     <div class="f"><label>Forward <span id="cfL">0.00 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0" step="0.01"></div>
     <div class="f"><label>Right <span id="crL">0.00 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="0" step="0.01"></div>
   </div></div>
@@ -524,8 +524,11 @@ function computeAim(silent=false){
   const aimCamRt =aimN*camRtN +aimE*camRtE;  // metres right in camera
 
   // ── CONVERT TO CANVAS PIXELS ──────────────────────────────────
-  // C20 ~90° HFOV → ground width at height h = 2*h*tan(45°) = 2h
-  const pxPerM=MC.width/(2*height);
+  // C20 ~90° HFOV at 1× → ground width at height h = 2*h*tan(45°) = 2h.
+  // Zoom narrows the FOV by the zoom factor, shrinking ground-width-in-view
+  // by the same factor, so pixels-per-metre scales linearly with zoom.
+  const zoom=parseFloat(V('zoom'));
+  const pxPerM=MC.width/(2*height)*zoom;
 
   aimPoint={
     x: targetMark.x + aimCamRt * pxPerM,      // right = +x
@@ -744,6 +747,12 @@ bind('da','daL',v=>v.toFixed(3)+' m²');
 bind('dc','dcL',v=>v.toFixed(2));
 bind('cf','cfL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
+bind('zoom','zmL',v=>v.toFixed(0)+'×');
+
+// Live-recompute the aim point when any physics/camera input changes
+['ws','wd','pm','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
+  E(id).addEventListener('input',()=>{ if(targetMark) computeAim(true); });
+});
 
 function updateHUD(){
   const f=(v,d=1)=>v!==null&&v!==undefined?v.toFixed(d):'—';
