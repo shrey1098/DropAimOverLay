@@ -261,8 +261,13 @@ async function renderFrame(jpg) {
     VC.width=bmp.width; VC.height=bmp.height;
     vx.drawImage(bmp,0,0);
     bmp.close();
+  } catch(e) { return; } // corrupt frame — skip it
 
-    // Run tracker
+  // Draw video FIRST — a tracker/physics error must never freeze the feed
+  ctx.drawImage(VC,0,0,MC.width,MC.height);
+
+  // Run tracker (isolated: an error here drops tracking, not video)
+  try {
     if(targetMark && targetMarkVideo) {
       const img = vx.getImageData(0,0,VC.width,VC.height);
       const t = trackPoint(img, targetMarkVideo.x, targetMarkVideo.y);
@@ -273,12 +278,10 @@ async function renderFrame(jpg) {
         if(telemetry.altAGL && telemetry.altAGL>0) computeAim(true);
       }
     }
+  } catch(e) { console.error('[TRACKER]', e); }
 
-    // Draw video
-    ctx.drawImage(VC,0,0,MC.width,MC.height);
-    // Draw crosshairs on top
-    drawOverlay();
-  } catch(e) {}
+  // Draw crosshairs on top (isolated for the same reason)
+  try { drawOverlay(); } catch(e) { console.error('[OVERLAY]', e); }
 }
 
 startStream();
@@ -527,7 +530,8 @@ function computeAim(silent=false){
   // C20 ~90° HFOV at 1× → ground width at height h = 2*h*tan(45°) = 2h.
   // Zoom narrows the FOV by the zoom factor, shrinking ground-width-in-view
   // by the same factor, so pixels-per-metre scales linearly with zoom.
-  const zoom=parseFloat(V('zoom'));
+  const zoomEl=E('zoom');
+  const zoom=zoomEl?parseFloat(zoomEl.value):22; // fall back if slider missing
   const pxPerM=MC.width/(2*height)*zoom;
 
   aimPoint={
@@ -590,8 +594,10 @@ function drawOverlay(){
       // Error distance pill
       const errM=dist/result.pxPerM;
       const mx=(cx+aimPoint.x)/2, my=(cy+aimPoint.y)/2;
-      ctx.fillStyle='rgba(0,229,255,.12)';ctx.strokeStyle='rgba(0,229,255,.4)';ctx.lineWidth=1;
-      ctx.beginPath();ctx.roundRect(mx-40,my-12,80,18,3);ctx.fill();ctx.stroke();
+            ctx.fillStyle='rgba(0,229,255,.12)';ctx.strokeStyle='rgba(0,229,255,.4)';ctx.lineWidth=1;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(mx-40,my-12,80,18,3); else ctx.rect(mx-40,my-12,80,18); // roundRect needs Chrome 99+
+      ctx.fill();ctx.stroke();
       ctx.fillStyle='#00e5ff';ctx.font='bold 10px Share Tech Mono';ctx.textAlign='center';
       ctx.fillText(errM.toFixed(1)+'m off',mx,my);ctx.textAlign='left';
 
@@ -682,8 +688,9 @@ MC.addEventListener('click', e => {
   captureTpl(g,VC.width,VC.height,Math.round(targetMarkVideo.x),Math.round(targetMarkVideo.y));
   prevGray=g; prevW=VC.width; prevH=VC.height;
 
-  aimPoint=null;
+    aimPoint=null;
   if(telemetry.altAGL&&telemetry.altAGL>1) computeAim(); else hideBanner(2000);
+  try { drawOverlay(); } catch(e) {} // show the mark immediately, don't wait for next frame
 });
 
 E('calcBtn').addEventListener('click',()=>computeAim());
