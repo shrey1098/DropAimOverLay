@@ -24,7 +24,8 @@ const path      = require('path');
 const CONFIG = {
   port:        3000,
   rtspUrl:     'rtsp://192.168.144.108:554/main',   // local mediamtx
-  mavlinkPort: 14445,                            // QGC forwards here
+  mavlinkPort: 14551,
+  qgcPort:     14550,                            // QGC forwards here
   videoWidth:  854,
   videoHeight: 480,
   videoFps:    15,
@@ -142,15 +143,24 @@ function startVideo() {
 function startMavlink() {
   const udp = dgram.createSocket('udp4');
   let rem = Buffer.alloc(0);
+  let datalink = null; // last source the telemetry arrived from (for uplink return path)
 
   udp.on('message', (msg, ri) => {
+    // Uplink: QGC → drone (params, mode changes, missions) — pass straight back
+    if(ri.port === CONFIG.qgcPort && ri.address === '127.0.0.1') {
+      if(datalink) udp.send(msg, datalink.port, datalink.address);
+      return;
+    }
+    // Downlink: datalink → us. Parse for the app, then relay to QGC.
+    datalink = ri;
     if(!mavState.connected){ console.log(`[MAV] Receiving from ${ri.address}:${ri.port} ✓`); mavState.connected=true; }
+    udp.send(msg, CONFIG.qgcPort, '127.0.0.1');
     rem = Buffer.concat([rem, msg]);
     rem = parseMav(rem);
     if(rem.length>512) rem=Buffer.alloc(0);
   });
   udp.on('error', e => console.log('[MAV] Error:', e.message));
-  udp.bind(CONFIG.mavlinkPort, () => console.log(`[MAV] Listening UDP :${CONFIG.mavlinkPort}`));
+  udp.bind(CONFIG.mavlinkPort, () => console.log(`[MAV] Listening UDP :${CONFIG.mavlinkPort} → relaying to QGC :${CONFIG.qgcPort}`));
 }
 
 function parseMav(buf) {
