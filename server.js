@@ -171,15 +171,18 @@ function parseMav(buf) {
     const pl=buf[i+1], hl=v2?10:6, tl=hl+pl+2;
     if(i+tl>buf.length) break;
     const id=v2?(buf[i+7]|buf[i+8]<<8|buf[i+9]<<16):buf[i+5];
-    const p=buf.slice(i+hl,i+hl+pl);
+    // MAVLink v2 truncates trailing zero bytes from payloads; pad back to full
+    // length so truncated fields read as zero (their spec-defined value).
+    const p=Buffer.alloc(28);
+    buf.copy(p,0,i+hl,i+hl+Math.min(pl,28));
     const d=new DataView(p.buffer,p.byteOffset,p.length);
     try{
-      if(id===30&&pl>=28){
+      if(id===30&&pl>=16){
         mavState.latest.roll=d.getFloat32(4,true)*180/Math.PI;
         mavState.latest.pitch=d.getFloat32(8,true)*180/Math.PI;
         let y=d.getFloat32(12,true)*180/Math.PI;
         mavState.latest.yaw=y<0?y+360:y;
-      }else if(id===33&&pl>=28){
+      }else if(id===33&&pl>=18){
         mavState.latest.lat=d.getInt32(4,true)*1e-7;
         mavState.latest.lon=d.getInt32(8,true)*1e-7;
         mavState.latest.altMSL=d.getInt32(12,true)*1e-3;
@@ -189,7 +192,7 @@ function parseMav(buf) {
         mavState.latest.vz=d.getInt16(24,true)*0.01;
         mavState.latest.heading=d.getUint16(26,true)*0.01;
         mavState.latest.groundspeed=Math.sqrt(mavState.latest.vx**2+mavState.latest.vy**2);
-      }else if(id===168&&pl>=12){
+      }else if(id===168&&pl>=5){
         mavState.latest.windDir=((d.getFloat32(0,true)%360)+360)%360;
         mavState.latest.windSpeed=d.getFloat32(4,true);
       }
