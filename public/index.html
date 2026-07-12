@@ -145,10 +145,18 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
-    <div class="f"><label>Mass <span id="pmL">0.50 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="0.5" step="0.05"></div>
-    <div class="f"><label>Cd <span id="cdL">0.47</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.47" step="0.01"></div>
-    <div class="f"><label>Tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
-    <div class="f"><label>Area <span id="paL">0.010 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.01" step="0.001"></div>
+    <div class="f"><label>Mass <span id="pmL">4.20 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="4.2" step="0.05"></div>
+    <div class="f"><label>Release orientation</label><select id="orient">
+      <option value="H" selected>Horizontal — tumble → nose down</option>
+      <option value="V">Vertical — nose down</option>
+    </select></div>
+    <div id="phaseRows">
+      <div class="f"><label>Tumble time <span id="ttL">0.5 s</span></label><input type="range" id="ttime" min="0" max="2" value="0.5" step="0.1"></div>
+      <div class="f"><label>Broadside area <span id="bsaL">0.036 m²</span></label><input type="range" id="bsa" min="0.005" max="0.1" value="0.036" step="0.001"></div>
+    </div>
+    <div class="f"><label>Nose-down Cd <span id="cdL">0.30</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.30" step="0.01"></div>
+    <div class="f"><label>Nose-down area <span id="paL">0.005 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.005" step="0.001"></div>
+    <div class="f"><label>Residual tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
   </div></div>
 
   <div class="sec"><div class="sh">🌡 ENVIRONMENT</div><div class="sb">
@@ -458,23 +466,28 @@ function getWind(){
   };
 }
 
-function rk4Drop(h,mass,cd,area,initVx,wSpd){
+// phase1 (optional): {tumbleTime, area1, cd1} — broadside drag right after a
+// horizontal release, before the round noses down to the streamlined cd/area.
+function rk4Drop(h,mass,cd,area,initVx,wSpd,phase1){
   let x=0,y=h,vvx=initVx,vy=0,t=0;
-  const acc=(vvx,vy,y)=>{
+  const acc=(vvx,vy,y,tt)=>{
+    // Two-phase drag: broadside/tumbling while tt < tumbleTime, then nose-down.
+    let A=area, Cd=cd;
+    if(phase1 && tt<phase1.tumbleTime){ A=phase1.area1; Cd=phase1.cd1; }
     const rho=getRho(Math.max(0,y));
     const wL=windAtAlt(wSpd,Math.max(0.1,y));
     // relVx: payload velocity minus wind velocity (both in downwind direction)
     // wind blows in +x (downwind), so relative = vx - wind
     const rx=vvx-wL, ry=vy;
     const sp=Math.sqrt(rx*rx+ry*ry);
-    const F=sp<1e-9?0:0.5*rho*sp*sp*cd*area;
+    const F=sp<1e-9?0:0.5*rho*sp*sp*Cd*A;
     return{ax:sp<1e-9?0:-F*(rx/sp)/mass, ay:-G+(sp<1e-9?0:-F*(ry/sp)/mass)};
   };
   while(y>0&&t<200){
-    const a1=acc(vvx,vy,y);
-    const a2=acc(vvx+a1.ax*DT/2,vy+a1.ay*DT/2,y+vy*DT/2);
-    const a3=acc(vvx+a2.ax*DT/2,vy+a2.ay*DT/2,y+(vy+a1.ay*DT/2)*DT/2);
-    const a4=acc(vvx+a3.ax*DT,vy+a3.ay*DT,y+(vy+a2.ay*DT/2)*DT);
+    const a1=acc(vvx,vy,y,t);
+    const a2=acc(vvx+a1.ax*DT/2,vy+a1.ay*DT/2,y+vy*DT/2,t+DT/2);
+    const a3=acc(vvx+a2.ax*DT/2,vy+a2.ay*DT/2,y+(vy+a1.ay*DT/2)*DT/2,t+DT/2);
+    const a4=acc(vvx+a3.ax*DT,vy+a3.ay*DT,y+(vy+a2.ay*DT/2)*DT,t+DT);
     vvx+=(DT/6)*(a1.ax+2*a2.ax+2*a3.ax+a4.ax);
     vy+=(DT/6)*(a1.ay+2*a2.ay+2*a3.ay+a4.ay);
     x+=vvx*DT; y+=vy*DT; t+=DT;
@@ -503,8 +516,15 @@ function computeAim(silent=false){
   // At release, payload gets small downwind kick from pendulum effect
   const initVel=G*Math.sin(tiltRad)*0.05;
 
+  // Horizontal release: broadside/tumbling drag for the first `tumbleTime`
+  // seconds, then the round noses down to the streamlined cd/area above.
+  let phase1=null;
+  if(V('orient')==='H'){
+    phase1={ tumbleTime:parseFloat(V('ttime')), area1:parseFloat(V('bsa')), cd1:1.1 };
+  }
+
   // RK4 simulation — drift is positive, in downwind direction
-  const {drift,tof}=rk4Drop(height,mass,cd,area,initVel,wSpd);
+  const {drift,tof}=rk4Drop(height,mass,cd,area,initVel,wSpd,phase1);
 
   // ── COORDINATE TRANSFORM ──────────────────────────────────────
   // Convert downwind drift to North/East world coordinates
@@ -799,6 +819,8 @@ function bind(id,lbl,fmt){const el=E(id),lb=E(lbl);const u=()=>{lb.textContent=f
 bind('ws','wsL',v=>v.toFixed(1)+' m/s');
 bind('wd','wdL',v=>v.toFixed(0)+'°');
 bind('pm','pmL',v=>v.toFixed(2)+' kg');
+bind('ttime','ttL',v=>v.toFixed(1)+' s');
+bind('bsa','bsaL',v=>v.toFixed(3)+' m²');
 bind('cd','cdL',v=>v.toFixed(2));
 bind('tm','tmL',v=>v.toFixed(0)+'%');
 bind('pa','paL',v=>v.toFixed(3)+' m²');
@@ -812,9 +834,17 @@ bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('zoom','zmL',v=>v.toFixed(0)+'×');
 
 // Live-recompute the aim point when any physics/camera input changes
-['ws','wd','pm','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
+['ws','wd','pm','ttime','bsa','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
   E(id).addEventListener('input',()=>{ if(targetMark) computeAim(true); });
 });
+
+// Release orientation: show phase-1 (broadside) controls only when Horizontal
+function updateOrient(){
+  E('phaseRows').style.display = V('orient')==='H' ? '' : 'none';
+  if(targetMark) computeAim(true);
+}
+E('orient').addEventListener('change', updateOrient);
+updateOrient();
 
 function updateHUD(){
   const f=(v,d=1)=>v!==null&&v!==undefined?v.toFixed(d):'—';
