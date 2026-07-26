@@ -145,17 +145,17 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
-    <div class="f"><label>Mass <span id="pmL">4.20 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="4.2" step="0.05"></div>
+    <div class="f"><label>Mass <span id="pmL">4.00 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="4" step="0.05"></div>
     <div class="f"><label>Release orientation</label><select id="orient">
       <option value="H" selected>Horizontal — tumble → nose down</option>
       <option value="V">Vertical — nose down</option>
     </select></div>
     <div id="phaseRows">
-      <div class="f"><label>Tumble time <span id="ttL">0.5 s</span></label><input type="range" id="ttime" min="0" max="2" value="0.5" step="0.1"></div>
+      <div class="f"><label>Tumble time <span id="ttL">0.0 s</span></label><input type="range" id="ttime" min="0" max="2" value="0" step="0.1"></div>
       <div class="f"><label>Broadside area <span id="bsaL">0.036 m²</span></label><input type="range" id="bsa" min="0.005" max="0.1" value="0.036" step="0.001"></div>
     </div>
-    <div class="f"><label>Nose-down Cd <span id="cdL">0.30</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.30" step="0.01"></div>
-    <div class="f"><label>Nose-down area <span id="paL">0.005 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.005" step="0.001"></div>
+    <div class="f"><label>Nose-down Cd <span id="cdL">0.20</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.20" step="0.01"></div>
+    <div class="f"><label>Nose-down area <span id="paL">0.030 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.030" step="0.001"></div>
     <div class="f"><label>Residual tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
   </div></div>
 
@@ -178,8 +178,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
   <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
     <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="1" max="30" value="22" step="1"></div>
-    <div class="f"><label>Forward <span id="cfL">0.00 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0" step="0.01"></div>
-    <div class="f"><label>Right <span id="crL">0.00 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="0" step="0.01"></div>
+    <div class="f"><label>Forward <span id="cfL">+0.15 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0.15" step="0.01"></div>
+    <div class="f"><label>Right <span id="crL">-0.50 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="-0.5" step="0.01"></div>
   </div></div>
 
   <div class="sec"><div class="sh">🎯 CONTROLS</div><div class="sb">
