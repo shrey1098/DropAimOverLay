@@ -250,19 +250,34 @@ async function startStream() {
     const reader = res.body.getReader();
     let buf = new Uint8Array(0);
     const cat = (a,b) => { const c=new Uint8Array(a.length+b.length); c.set(a); c.set(b,a.length); return c; };
+    const find = (a,b0,b1,from) => { for(let i=from;i<a.length-1;i++) if(a[i]===b0&&a[i+1]===b1) return i; return -1; };
+
+    // Always display the NEWEST decoded frame. Decoding + tracking can take
+    // longer than one frame interval; if we awaited every frame the reader
+    // would fall behind and the feed would drift further from live the longer
+    // the app ran. Instead: skip stale frames, and never queue a second decode.
+    let decoding = false;
 
     while(true) {
       const {done,value} = await reader.read();
       if(done) break;
       buf = cat(buf, value);
-      let s = -1;
-      for(let i=0;i<buf.length-1;i++){
-        if(buf[i]===0xFF&&buf[i+1]===0xD8) s=i;
-        if(s!==-1&&buf[i]===0xFF&&buf[i+1]===0xD9){
-          const jpg=buf.slice(s,i+2);
-          buf=buf.slice(i+2); s=-1; i=-1;
-          await renderFrame(jpg);
-          break;
+
+      // Pull every complete JPEG out of the buffer, keep only the last one.
+      let latest = null, from = 0;
+      for(;;){
+        const s = find(buf,0xFF,0xD8,from);
+        if(s < 0) break;
+        const e = find(buf,0xFF,0xD9,s+2);
+        if(e < 0) break;
+        latest = buf.slice(s, e+2);
+        from = e + 2;
+      }
+      if(latest){
+        buf = buf.slice(from);              // drop the frames we skipped over
+        if(!decoding){
+          decoding = true;
+          renderFrame(latest).catch(()=>{}).finally(()=>{ decoding = false; });
         }
       }
       if(buf.length>2e6) buf=new Uint8Array(0);
@@ -495,6 +510,21 @@ function rk4Drop(h,mass,cd,area,initVx,wSpd,phase1){
   return{drift:x, tof:t};
 }
 
+// The RK4 fall simulation is the heaviest thing on the per-frame budget, and
+// it runs on the same thread that decodes and paints the video. Its inputs
+// barely change between frames, so memoise on a quantised key (0.5 m altitude,
+// 0.1 m/s wind — both far below sensor noise). Frees the frame budget for the
+// live feed without changing the aim point the operator sees.
+let _rk4Key=null, _rk4Val=null;
+function rk4DropCached(h,mass,cd,area,initVx,wSpd,phase1){
+  const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(wSpd*10),
+             phase1?phase1.tumbleTime:-1,phase1?phase1.area1:-1,
+             V('tmp'),V('el'),V('tr')].join('|');
+  if(key===_rk4Key && _rk4Val) return _rk4Val;
+  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,wSpd,phase1);
+  return _rk4Val;
+}
+
 function computeAim(silent=false){
   if(!targetMark) return;
 
@@ -524,7 +554,7 @@ function computeAim(silent=false){
   }
 
   // RK4 simulation — drift is positive, in downwind direction
-  const {drift,tof}=rk4Drop(height,mass,cd,area,initVel,wSpd,phase1);
+  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd,phase1);
 
   // ── COORDINATE TRANSFORM ──────────────────────────────────────
   // Convert downwind drift to North/East world coordinates

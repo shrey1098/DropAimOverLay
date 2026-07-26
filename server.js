@@ -17,6 +17,7 @@ const express   = require('express');
 const http      = require('http');
 const WebSocket = require('ws');
 const dgram     = require('dgram');
+const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const path      = require('path');
 
@@ -34,10 +35,16 @@ const CONFIG = {
   videoHeight: 480,
   videoFps:    15,
   videoQuality: 5,   // MJPEG quality (1=best, 31=worst)
+  streamMaxBacklog: 256 * 1024,  // bytes queued per viewer before frames are dropped
 };
 
 // ── STATE ─────────────────────────────────────────────────────────
 let currentFrame  = null;
+// Frames are pushed to viewers the instant they arrive rather than polled on a
+// timer — a timer adds up to one frame-interval of latency and re-sends stale
+// frames when the camera stalls.
+const frameBus    = new EventEmitter();
+frameBus.setMaxListeners(0);
 const videoState  = { connected: false, ffmpeg: null };
 const mavState    = {
   connected: false,
@@ -75,18 +82,27 @@ app.get('/stream', (req, res) => {
     'Connection':    'keep-alive',
     'Pragma':        'no-cache',
   });
-  const iv = setInterval(() => {
-    if(currentFrame && !res.destroyed) {
-      try {
-        res.write('--mjpegframe\r\n');
-        res.write('Content-Type: image/jpeg\r\n');
-        res.write(`Content-Length: ${currentFrame.length}\r\n\r\n`);
-        res.write(currentFrame);
-        res.write('\r\n');
-      } catch(e) {}
-    }
-  }, Math.round(1000 / CONFIG.videoFps));
-  req.on('close', () => clearInterval(iv));
+  // Nagle batches small writes — that delay is visible as video lag.
+  if(res.socket) res.socket.setNoDelay(true);
+
+  const send = frame => {
+    if(res.destroyed) return;
+    // Back-pressure: if the socket is already behind, DROP this frame instead
+    // of queueing it. Queued frames are what turn a small delay into a lag
+    // that grows for as long as the app is left running.
+    if(res.writableLength > CONFIG.streamMaxBacklog) return;
+    try {
+      res.write('--mjpegframe\r\n');
+      res.write('Content-Type: image/jpeg\r\n');
+      res.write(`Content-Length: ${frame.length}\r\n\r\n`);
+      res.write(frame);
+      res.write('\r\n');
+    } catch(e) {}
+  };
+
+  if(currentFrame) send(currentFrame);   // paint immediately, don't wait
+  frameBus.on('frame', send);
+  req.on('close', () => frameBus.removeListener('frame', send));
 });
 
 app.get('/api/status', (req, res) => {
@@ -129,18 +145,30 @@ setInterval(() => {
 }, 200);
 
 // ── VIDEO: RTSP → MJPEG ───────────────────────────────────────────
+const SOI = Buffer.from([0xFF, 0xD8]);   // JPEG start-of-image
+const EOI = Buffer.from([0xFF, 0xD9]);   // JPEG end-of-image
+
 function startVideo() {
   if(videoState.ffmpeg) return;
   console.log('[VIDEO] Starting ffmpeg...');
 
   const ff = spawn('ffmpeg', [
     '-loglevel', 'error',
+    // ── low-latency input ──────────────────────────────────────────
+    // Default ffmpeg buffers/probes the stream before emitting anything,
+    // which shows up as a fixed delay on the live feed.
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    '-probesize', '32',
+    '-analyzeduration', '0',
     '-rtsp_transport', 'tcp',
     '-i', CONFIG.rtspUrl,
+    '-an',                      // no audio path at all
     '-f', 'image2pipe',
     '-vf', `fps=${CONFIG.videoFps},scale=${CONFIG.videoWidth}:${CONFIG.videoHeight}`,
     '-vcodec', 'mjpeg',
     '-q:v', String(CONFIG.videoQuality),
+    '-flush_packets', '1',      // emit each JPEG as soon as it is encoded
     'pipe:1',
   ]);
   videoState.ffmpeg = ff;
@@ -149,13 +177,23 @@ function startVideo() {
   ff.stdout.on('data', chunk => {
     videoState.connected = true;
     buf = Buffer.concat([buf, chunk]);
-    let s = -1;
-    for(let i=0;i<buf.length-1;i++){
-      if(buf[i]===0xFF&&buf[i+1]===0xD8) s=i;
-      if(s!==-1&&buf[i]===0xFF&&buf[i+1]===0xD9){
-        currentFrame=buf.slice(s,i+2);
-        buf=buf.slice(i+2); s=-1; i=-1; break;
-      }
+    // Drain EVERY complete JPEG in the buffer and keep only the newest. The
+    // previous version stopped after the first frame, so whatever else had
+    // already arrived sat in the buffer and was shown one chunk late —
+    // a backlog that compounds into steadily worsening lag.
+    let latest = null, from = 0;
+    for(;;){
+      const s = buf.indexOf(SOI, from);
+      if(s < 0) break;
+      const e = buf.indexOf(EOI, s + 2);
+      if(e < 0) break;
+      latest = buf.slice(s, e + 2);
+      from = e + 2;
+    }
+    if(latest){
+      buf = buf.slice(from);          // discard the stale frames we skipped
+      currentFrame = latest;
+      frameBus.emit('frame', latest); // push to viewers immediately
     }
     if(buf.length>5e6) buf=Buffer.alloc(0);
   });
