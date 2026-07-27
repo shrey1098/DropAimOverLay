@@ -146,17 +146,9 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
   <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
     <div class="f"><label>Mass <span id="pmL">4.00 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="4" step="0.05"></div>
-    <div class="f"><label>Release orientation</label><select id="orient">
-      <option value="H" selected>Horizontal — tumble → nose down</option>
-      <option value="V">Vertical — nose down</option>
-    </select></div>
-    <div id="phaseRows">
-      <div class="f"><label>Tumble time <span id="ttL">0.0 s</span></label><input type="range" id="ttime" min="0" max="2" value="0" step="0.1"></div>
-      <div class="f"><label>Broadside area <span id="bsaL">0.036 m²</span></label><input type="range" id="bsa" min="0.005" max="0.1" value="0.036" step="0.001"></div>
-    </div>
-    <div class="f"><label>Nose-down Cd <span id="cdL">0.20</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.20" step="0.01"></div>
-    <div class="f"><label>Nose-down area <span id="paL">0.030 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.030" step="0.001"></div>
-    <div class="f"><label>Residual tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
+    <div class="f"><label>Cd <span id="cdL">0.20</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.20" step="0.01"></div>
+    <div class="f"><label>Tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
+    <div class="f"><label>Area <span id="paL">0.030 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.030" step="0.001"></div>
   </div></div>
 
   <div class="sec"><div class="sh">🌡 ENVIRONMENT</div><div class="sb">
@@ -821,10 +813,9 @@ E('logRelBtn').addEventListener('click', ()=>{
     // payload + environment (what the model used)
     mass_kg:    parseFloat(V('pm')),
     cd:         parseFloat(V('cd')),
+    tumble_pct: parseFloat(V('tm')),
+    eff_cd:     round2(getEffCd()),
     area_m2:    parseFloat(V('pa')),
-    tumble_s:   parseFloat(V('ttime')),
-    broadside_area_m2: parseFloat(V('bsa')),
-    orient:     V('orient'),
     temp_c:     parseFloat(V('tmp')),
     site_elev_m: parseFloat(V('el')),
     terrain_z0: parseFloat(V('tr')),
@@ -1010,8 +1001,6 @@ function bind(id,lbl,fmt){const el=E(id),lb=E(lbl);const u=()=>{lb.textContent=f
 bind('ws','wsL',v=>v.toFixed(1)+' m/s');
 bind('wd','wdL',v=>v.toFixed(0)+'°');
 bind('pm','pmL',v=>v.toFixed(2)+' kg');
-bind('ttime','ttL',v=>v.toFixed(1)+' s');
-bind('bsa','bsaL',v=>v.toFixed(3)+' m²');
 bind('cd','cdL',v=>v.toFixed(2));
 bind('tm','tmL',v=>v.toFixed(0)+'%');
 bind('pa','paL',v=>v.toFixed(3)+' m²');
@@ -1025,17 +1014,9 @@ bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('zoom','zmL',v=>v.toFixed(0)+'×');
 
 // Live-recompute the aim point when any physics/camera input changes
-['ws','wd','pm','ttime','bsa','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
+['ws','wd','pm','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
   E(id).addEventListener('input',()=>{ if(targetMark) computeAim(true); });
 });
-
-// Release orientation: show phase-1 (broadside) controls only when Horizontal
-function updateOrient(){
-  E('phaseRows').style.display = V('orient')==='H' ? '' : 'none';
-  if(targetMark) computeAim(true);
-}
-E('orient').addEventListener('change', updateOrient);
-updateOrient();
 
 function updateHUD(){
   const f=(v,d=1)=>v!==null&&v!==undefined?v.toFixed(d):'—';
