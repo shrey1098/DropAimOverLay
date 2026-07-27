@@ -195,6 +195,18 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <button class="btn btn-rd" id="rtlBtn" style="margin-top:4px">🏠 RTL — RETURN HOME</button>
     <div style="font-size:9px;color:var(--mt);text-align:center">MODE <span id="mMode" style="color:var(--ac)">—</span></div>
   </div></div>
+
+  <div class="sec"><div class="sh">📝 DROP LOG</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Records each drop for accuracy calibration. Log the solution at release, then tap where the round actually landed.</div>
+    <button class="btn btn-gn" id="logRelBtn">⦿ LOG RELEASE</button>
+    <button class="btn" id="markImpBtn" disabled style="opacity:.4">◎ MARK IMPACT — TAP LANDING</button>
+    <div class="aimr" id="logR"></div>
+    <div style="display:flex;gap:5px">
+      <button class="btn btn-gd" id="expBtn" style="flex:1">⬇ EXPORT CSV</button>
+      <button class="btn btn-rd" id="logClrBtn" style="width:auto;padding:8px 12px" title="clear on-screen counter">✕</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">LOGGED <span id="logCount" style="color:var(--gn)">0</span> drops this session</div>
+  </div></div>
 </div>
 </div>
 
@@ -747,6 +759,9 @@ function drawHz(){
 MC.addEventListener('click', e => {
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
+  // In impact-marking mode a tap records where the round LANDED — it must not
+  // create a new target.
+  if(markImpactMode){ recordImpact(cx,cy); return; }
   targetMark={x:cx,y:cy};
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
@@ -768,6 +783,164 @@ E('clearBtn').addEventListener('click',()=>{
   E('aimR').classList.remove('show');
   showBanner('TAP VIDEO TO MARK TARGET');
 });
+
+// ══════════════════════════════════════════════════════════════════
+// DROP LOG — per-drop accuracy recording for drag calibration
+// ══════════════════════════════════════════════════════════════════
+// Two-step capture per drop:
+//   1) LOG RELEASE  — snapshots the firing solution + live telemetry at the
+//                      instant of release (what the app predicted).
+//   2) MARK IMPACT  — operator taps where the round actually landed; the app
+//                      computes the miss vector, decomposed onto the wind axis
+//                      (downwind = how far past the target, crosswind = sideways).
+// The downwind residual is the calibration signal: + means the round drifted
+// MORE than predicted (model under-corrects), − means it fell short.
+let dropLog = [];
+let pendingRelease = null;     // solution snapshot awaiting an impact mark
+let markImpactMode = false;
+let logSeq = 0;
+
+function logStatus(html, cls){
+  const b=E('logR'); b.classList.add('show');
+  b.style.color = cls==='err' ? 'var(--rd)' : (cls==='warn' ? 'var(--gd)' : 'var(--gn)');
+  b.style.borderColor = cls==='err' ? 'rgba(255,59,85,.4)' : 'rgba(0,255,136,.3)';
+  b.style.background  = cls==='err' ? 'rgba(255,59,85,.06)' : 'rgba(0,255,136,.05)';
+  b.innerHTML = html;
+}
+
+// Capture everything about the shot at the moment of release.
+E('logRelBtn').addEventListener('click', ()=>{
+  if(!targetMark || !result){
+    logStatus('Mark a target and CALCULATE AIM before logging a release.','err');
+    return;
+  }
+  logSeq++;
+  pendingRelease = {
+    id: logSeq,
+    t_release: new Date().toISOString(),
+    // live vehicle state at release
+    alt_agl_m:  round1(telemetry.altAGL),
+    wind_ms:    round1(result.wSpd),
+    wind_dir_from_deg: Math.round(result.wDir),
+    wind_src:   result.wSrc,
+    heading_deg: round1(telemetry.heading),
+    roll_deg:   round1(telemetry.roll),
+    pitch_deg:  round1(telemetry.pitch),
+    yaw_deg:    round1(telemetry.yaw),
+    gnd_spd_ms: round2(telemetry.groundspeed),
+    vx_ms:      round2(telemetry.vx),
+    vy_ms:      round2(telemetry.vy),
+    // payload + environment (what the model used)
+    mass_kg:    parseFloat(V('pm')),
+    cd:         parseFloat(V('cd')),
+    area_m2:    parseFloat(V('pa')),
+    tumble_s:   parseFloat(V('ttime')),
+    broadside_area_m2: parseFloat(V('bsa')),
+    orient:     V('orient'),
+    temp_c:     parseFloat(V('tmp')),
+    site_elev_m: parseFloat(V('el')),
+    terrain_z0: parseFloat(V('tr')),
+    zoom_x:     parseFloat(V('zoom')),
+    px_per_m:   round2(result.pxPerM),
+    // the prediction
+    pred_drift_m: round2(result.drift),
+    tof_s:      round2(result.tof),
+    hover_tilt_deg: round1(result.tiltDeg),
+    // geometry (canvas px) — target/aim at release
+    target_px_x: Math.round(targetMark.x), target_px_y: Math.round(targetMark.y),
+    aim_px_x:    Math.round(aimPoint.x),    aim_px_y:    Math.round(aimPoint.y),
+    _pxPerM: result.pxPerM, _hdg: telemetry.heading||0, _wDir: result.wDir,
+  };
+  // arm impact marking
+  markImpactMode = true;
+  const mb=E('markImpBtn'); mb.disabled=false; mb.style.opacity='1';
+  mb.classList.add('btn-gn'); mb.textContent='◎ TAP WHERE IT LANDED';
+  logStatus(`Release #${pendingRelease.id} logged — alt ${pendingRelease.alt_agl_m} m, wind ${pendingRelease.wind_ms} m/s @ ${pendingRelease.wind_dir_from_deg}°.<br><b>Now tap the impact point on the video.</b>`,'warn');
+  showBanner('RELEASE LOGGED — TAP THE IMPACT POINT'); hideBanner(3000);
+});
+
+// Toggle marking manually (e.g. to re-arm without re-logging)
+E('markImpBtn').addEventListener('click', ()=>{
+  if(!pendingRelease){ logStatus('Log a release first.','err'); return; }
+  markImpactMode = !markImpactMode;
+  const mb=E('markImpBtn');
+  mb.textContent = markImpactMode ? '◎ TAP WHERE IT LANDED' : '◎ MARK IMPACT — TAP LANDING';
+  showBanner(markImpactMode ? 'TAP THE IMPACT POINT' : 'impact marking off'); hideBanner(1800);
+});
+
+// Operator tapped where the round landed → compute the miss vector.
+function recordImpact(ix, iy){
+  markImpactMode = false;
+  const mb=E('markImpBtn'); mb.disabled=true; mb.style.opacity='.4';
+  mb.classList.remove('btn-gn'); mb.textContent='◎ MARK IMPACT — TAP LANDING';
+  const rec = pendingRelease; pendingRelease=null;
+  if(!rec) return;
+
+  const ppm = rec._pxPerM, hdg = rec._hdg*PI/180;
+  // impact offset from the marked target, in metres, camera frame
+  const camRt = (ix - rec.target_px_x)/ppm;   // +right on screen
+  const camUp = -(iy - rec.target_px_y)/ppm;  // +forward on screen (canvas Y inverted)
+  // rotate camera frame → world North/East using heading (same basis as computeAim)
+  const missN = camUp*Math.cos(hdg) + camRt*Math.cos(hdg+PI/2);
+  const missE = camUp*Math.sin(hdg) + camRt*Math.sin(hdg+PI/2);
+  const miss_m = Math.hypot(missN, missE);
+  const miss_bearing = (Math.atan2(missE, missN)*180/PI + 360) % 360;  // target→impact, °T
+  // project onto the wind axis: downwind = where the wind blows TO
+  const dw = (rec._wDir + 180) * PI/180;
+  const miss_downwind = missN*Math.cos(dw)     + missE*Math.sin(dw);
+  const miss_cross    = missN*Math.cos(dw+PI/2)+ missE*Math.sin(dw+PI/2);
+  const verdict = miss_downwind >  0.3 ? 'UNDER-corrected (drifted past target)'
+                : miss_downwind < -0.3 ? 'OVER-corrected (fell short)'
+                : 'on the wind axis';
+
+  Object.assign(rec, {
+    t_impact: new Date().toISOString(),
+    impact_px_x: Math.round(ix), impact_px_y: Math.round(iy),
+    miss_m: round2(miss_m),
+    miss_bearing_deg: Math.round(miss_bearing),
+    miss_downwind_m: round2(miss_downwind),
+    miss_cross_m: round2(miss_cross),
+    // real drift the round actually experienced vs what we predicted
+    actual_drift_m: round2(rec.pred_drift_m + miss_downwind),
+    drift_scale_needed: rec.pred_drift_m>0.2 ? round2((rec.pred_drift_m+miss_downwind)/rec.pred_drift_m) : '',
+    verdict,
+  });
+  delete rec._pxPerM; delete rec._hdg; delete rec._wDir;
+
+  dropLog.push(rec);
+  E('logCount').textContent = dropLog.length;
+  logStatus(`Drop #${rec.id}: miss <b>${rec.miss_m} m</b> @ ${rec.miss_bearing_deg}°T<br>downwind ${rec.miss_downwind_m>=0?'+':''}${rec.miss_downwind_m} m · cross ${rec.miss_cross_m} m<br><span style="color:var(--gd)">${verdict}</span>`,'ok');
+  showBanner(`LOGGED: ${rec.miss_m} m miss`); hideBanner(2500);
+
+  // persist to the controller (best-effort; local copy is authoritative for export)
+  fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)})
+    .then(r=>r.json()).then(j=>{ if(j&&j.count) E('logCount').textContent=j.count; }).catch(()=>{});
+}
+
+E('expBtn').addEventListener('click', exportCSV);
+async function exportCSV(){
+  // Prefer the server file (survives reloads, holds every drop); fall back to
+  // the in-memory log if the server has none.
+  try{
+    const r = await fetch('/api/log/export');
+    if(r.ok){ dl(await r.blob(), 'dropaim_log.csv'); return; }
+  }catch(e){}
+  if(!dropLog.length){ showBanner('No drops logged yet'); hideBanner(2000); return; }
+  const cols=[...new Set(dropLog.flatMap(o=>Object.keys(o)))];
+  const esc=v=>v==null?'':/[",\n]/.test(''+v)?'"'+(''+v).replace(/"/g,'""')+'"':''+v;
+  const csv=[cols.join(',')].concat(dropLog.map(o=>cols.map(c=>esc(o[c])).join(','))).join('\n');
+  dl(new Blob([csv],{type:'text/csv'}), 'dropaim_log.csv');
+}
+function dl(blob,name){ const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
+
+E('logClrBtn').addEventListener('click', ()=>{
+  if(!confirm('Clear the on-screen counter? (drops already saved to the controller file are kept)')) return;
+  dropLog=[]; pendingRelease=null; markImpactMode=false;
+  E('logCount').textContent='0'; E('logR').classList.remove('show');
+});
+
+function round1(v){ return v==null?null:Math.round(v*10)/10; }
+function round2(v){ return v==null?null:Math.round(v*100)/100; }
 
 // ══════════════════════════════════════════════════════════════════
 // POSITION LOCK (BRAKE) / UNLOCK (LOITER)
