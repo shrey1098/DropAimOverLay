@@ -493,28 +493,24 @@ function getWind(){
   };
 }
 
-// phase1 (optional): {tumbleTime, area1, cd1} — broadside drag right after a
-// horizontal release, before the round noses down to the streamlined cd/area.
-function rk4Drop(h,mass,cd,area,initVx,wSpd,phase1){
+// Single-phase drop: one drag regime (cd, area) for the whole fall.
+function rk4Drop(h,mass,cd,area,initVx,wSpd){
   let x=0,y=h,vvx=initVx,vy=0,t=0;
-  const acc=(vvx,vy,y,tt)=>{
-    // Two-phase drag: broadside/tumbling while tt < tumbleTime, then nose-down.
-    let A=area, Cd=cd;
-    if(phase1 && tt<phase1.tumbleTime){ A=phase1.area1; Cd=phase1.cd1; }
+  const acc=(vvx,vy,y)=>{
     const rho=getRho(Math.max(0,y));
     const wL=windAtAlt(wSpd,Math.max(0.1,y));
     // relVx: payload velocity minus wind velocity (both in downwind direction)
     // wind blows in +x (downwind), so relative = vx - wind
     const rx=vvx-wL, ry=vy;
     const sp=Math.sqrt(rx*rx+ry*ry);
-    const F=sp<1e-9?0:0.5*rho*sp*sp*Cd*A;
+    const F=sp<1e-9?0:0.5*rho*sp*sp*cd*area;
     return{ax:sp<1e-9?0:-F*(rx/sp)/mass, ay:-G+(sp<1e-9?0:-F*(ry/sp)/mass)};
   };
   while(y>0&&t<200){
-    const a1=acc(vvx,vy,y,t);
-    const a2=acc(vvx+a1.ax*DT/2,vy+a1.ay*DT/2,y+vy*DT/2,t+DT/2);
-    const a3=acc(vvx+a2.ax*DT/2,vy+a2.ay*DT/2,y+(vy+a1.ay*DT/2)*DT/2,t+DT/2);
-    const a4=acc(vvx+a3.ax*DT,vy+a3.ay*DT,y+(vy+a2.ay*DT/2)*DT,t+DT);
+    const a1=acc(vvx,vy,y);
+    const a2=acc(vvx+a1.ax*DT/2,vy+a1.ay*DT/2,y+vy*DT/2);
+    const a3=acc(vvx+a2.ax*DT/2,vy+a2.ay*DT/2,y+(vy+a1.ay*DT/2)*DT/2);
+    const a4=acc(vvx+a3.ax*DT,vy+a3.ay*DT,y+(vy+a2.ay*DT/2)*DT);
     vvx+=(DT/6)*(a1.ax+2*a2.ax+2*a3.ax+a4.ax);
     vy+=(DT/6)*(a1.ay+2*a2.ay+2*a3.ay+a4.ay);
     x+=vvx*DT; y+=vy*DT; t+=DT;
@@ -528,12 +524,11 @@ function rk4Drop(h,mass,cd,area,initVx,wSpd,phase1){
 // 0.1 m/s wind — both far below sensor noise). Frees the frame budget for the
 // live feed without changing the aim point the operator sees.
 let _rk4Key=null, _rk4Val=null;
-function rk4DropCached(h,mass,cd,area,initVx,wSpd,phase1){
+function rk4DropCached(h,mass,cd,area,initVx,wSpd){
   const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(wSpd*10),
-             phase1?phase1.tumbleTime:-1,phase1?phase1.area1:-1,
              V('tmp'),V('el'),V('tr')].join('|');
   if(key===_rk4Key && _rk4Val) return _rk4Val;
-  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,wSpd,phase1);
+  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,wSpd);
   return _rk4Val;
 }
 
@@ -558,15 +553,8 @@ function computeAim(silent=false){
   // At release, payload gets small downwind kick from pendulum effect
   const initVel=G*Math.sin(tiltRad)*0.05;
 
-  // Horizontal release: broadside/tumbling drag for the first `tumbleTime`
-  // seconds, then the round noses down to the streamlined cd/area above.
-  let phase1=null;
-  if(V('orient')==='H'){
-    phase1={ tumbleTime:parseFloat(V('ttime')), area1:parseFloat(V('bsa')), cd1:1.1 };
-  }
-
-  // RK4 simulation — drift is positive, in downwind direction
-  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd,phase1);
+  // RK4 simulation — single drag regime, drift is positive (downwind direction)
+  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd);
 
   // ── COORDINATE TRANSFORM ──────────────────────────────────────
   // Convert downwind drift to North/East world coordinates
