@@ -190,6 +190,12 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
   <div class="sec"><div class="sh">📝 DROP LOG</div><div class="sb">
     <div style="font-size:9px;color:var(--mt);line-height:1.4">Records each drop for accuracy calibration. Log the solution at release, then tap where the round actually landed.</div>
+    <div style="display:flex;gap:5px">
+      <button class="btn" id="offsetBtn" style="flex:1">⊕ OFFSET: OFF</button>
+      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px" title="add the last drop's miss to the offset (registration)">SET</button>
+      <button class="btn btn-rd" id="offClrBtn" style="width:auto;padding:8px 10px" title="zero the offset">0</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">offset <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
     <button class="btn btn-gn" id="logRelBtn">⦿ LOG RELEASE</button>
     <button class="btn" id="markImpBtn" disabled style="opacity:.4">◎ MARK IMPACT — TAP LANDING</button>
     <div class="aimr" id="logR"></div>
@@ -220,6 +226,11 @@ let targetMark      = null; // {x,y} canvas pixels
 let targetMarkVideo = null; // {x,y} video pixels (for tracker)
 let aimPoint        = null; // {x,y} canvas pixels
 let result          = null; // physics result
+// Registration OFFSET (bias) — wind frame, metres. Shifts the aim to cancel the
+// average measured miss. Toggled by the OFFSET button; set from a sighting drop.
+let offsetOn        = false;
+let biasDown        = 0;    // + = aim further downwind
+let biasCross       = 0;    // + = aim further crosswind (90° cw of downwind)
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -566,8 +577,19 @@ function computeAim(silent=false){
   const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
 
   // Aim vector in world coords (from target to where drone should be)
-  const aimN=-dNorth-camOffN;  // upwind + camera offset
-  const aimE=-dEast -camOffE;
+  const aimNraw=-dNorth-camOffN;  // upwind + camera offset (model only)
+  const aimEraw=-dEast -camOffE;
+
+  // Registration OFFSET: add the session bias (wind frame → world) so the green
+  // marker and the logged aim reflect the correction. The un-offset aim is kept
+  // so the raw model error stays recoverable from the log.
+  const offApplied = offsetOn && (biasDown!==0 || biasCross!==0);
+  let aimN=aimNraw, aimE=aimEraw;
+  if(offApplied){
+    const dwR=((wDir+180)%360)*PI/180;
+    aimN += biasDown*Math.cos(dwR) + biasCross*Math.cos(dwR+PI/2);
+    aimE += biasDown*Math.sin(dwR) + biasCross*Math.sin(dwR+PI/2);
+  }
 
   // ── PROJECT TO CAMERA FRAME ───────────────────────────────────
   // Camera up = heading direction (what's "forward" for the drone)
@@ -577,6 +599,8 @@ function computeAim(silent=false){
 
   const aimCamUp =aimN*camUpN +aimE*camUpE;  // metres forward in camera
   const aimCamRt =aimN*camRtN +aimE*camRtE;  // metres right in camera
+  const rawCamUp =aimNraw*camUpN +aimEraw*camUpE;  // model-only aim (no offset)
+  const rawCamRt =aimNraw*camRtN +aimEraw*camRtE;
 
   // ── CONVERT TO CANVAS PIXELS ──────────────────────────────────
   // C20 ~90° HFOV at 1× → ground width at height h = 2*h*tan(45°) = 2h.
@@ -590,8 +614,10 @@ function computeAim(silent=false){
     x: targetMark.x + aimCamRt * pxPerM,      // right = +x
     y: targetMark.y - aimCamUp * pxPerM,       // forward = -y (canvas Y inverted)
   };
+  const rawAim={ x: targetMark.x + rawCamRt*pxPerM, y: targetMark.y - rawCamUp*pxPerM };
 
-  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
+  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM,
+          rawAim, offApplied, biasDown, biasCross};
 
   // Update HUD
   E('hDrift').textContent=drift.toFixed(1);
@@ -825,9 +851,14 @@ E('logRelBtn').addEventListener('click', ()=>{
     pred_drift_m: round2(result.drift),
     tof_s:      round2(result.tof),
     hover_tilt_deg: round1(result.tiltDeg),
-    // geometry (canvas px) — target/aim at release
+    // registration offset applied to the aim at release
+    offset_applied: result.offApplied,
+    offset_down_m:  result.offApplied ? round2(result.biasDown)  : 0,
+    offset_cross_m: result.offApplied ? round2(result.biasCross) : 0,
+    // geometry (canvas px) — target, offset aim (flown), and raw model aim
     target_px_x: Math.round(targetMark.x), target_px_y: Math.round(targetMark.y),
     aim_px_x:    Math.round(aimPoint.x),    aim_px_y:    Math.round(aimPoint.y),
+    aim_raw_px_x: Math.round(result.rawAim.x), aim_raw_px_y: Math.round(result.rawAim.y),
     _pxPerM: result.pxPerM, _hdg: telemetry.heading||0, _wDir: result.wDir,
   };
   // arm impact marking
@@ -872,29 +903,66 @@ function recordImpact(ix, iy){
                 : miss_downwind < -0.3 ? 'OVER-corrected (fell short)'
                 : 'on the wind axis';
 
+  // Raw (model-only) residual: remove the applied offset so the pure model error
+  // is always recoverable, whether or not the offset was on for this drop.
+  const oD = rec.offset_applied ? rec.offset_down_m : 0;
+  const oC = rec.offset_applied ? rec.offset_cross_m : 0;
+  const raw_down = miss_downwind - oD, raw_cross = miss_cross - oC;
+
   Object.assign(rec, {
     t_impact: new Date().toISOString(),
     impact_px_x: Math.round(ix), impact_px_y: Math.round(iy),
+    // residual AFTER the offset (impact vs target) — how well the corrected aim did
     miss_m: round2(miss_m),
     miss_bearing_deg: Math.round(miss_bearing),
     miss_downwind_m: round2(miss_downwind),
     miss_cross_m: round2(miss_cross),
-    // real drift the round actually experienced vs what we predicted
-    actual_drift_m: round2(rec.pred_drift_m + miss_downwind),
-    drift_scale_needed: rec.pred_drift_m>0.2 ? round2((rec.pred_drift_m+miss_downwind)/rec.pred_drift_m) : '',
+    // residual WITHOUT the offset — the pure model error (use this to calibrate)
+    raw_miss_m: round2(Math.hypot(raw_down, raw_cross)),
+    raw_miss_downwind_m: round2(raw_down),
+    raw_miss_cross_m: round2(raw_cross),
+    // real drift the round experienced vs predicted (from the raw model error)
+    actual_drift_m: round2(rec.pred_drift_m + raw_down),
+    drift_scale_needed: rec.pred_drift_m>0.2 ? round2((rec.pred_drift_m+raw_down)/rec.pred_drift_m) : '',
     verdict,
   });
   delete rec._pxPerM; delete rec._hdg; delete rec._wDir;
 
   dropLog.push(rec);
   E('logCount').textContent = dropLog.length;
-  logStatus(`Drop #${rec.id}: miss <b>${rec.miss_m} m</b> @ ${rec.miss_bearing_deg}°T<br>downwind ${rec.miss_downwind_m>=0?'+':''}${rec.miss_downwind_m} m · cross ${rec.miss_cross_m} m<br><span style="color:var(--gd)">${verdict}</span>`,'ok');
+  const rawLine = rec.offset_applied
+    ? `<br>raw (no offset): <b>${rec.raw_miss_m} m</b>  dw ${rec.raw_miss_downwind_m>=0?'+':''}${rec.raw_miss_downwind_m} · cr ${rec.raw_miss_cross_m}`
+    : '';
+  logStatus(`Drop #${rec.id}: miss <b>${rec.miss_m} m</b> @ ${rec.miss_bearing_deg}°T${rec.offset_applied?' (offset on)':''}<br>downwind ${rec.miss_downwind_m>=0?'+':''}${rec.miss_downwind_m} m · cross ${rec.miss_cross_m} m${rawLine}<br><span style="color:var(--gd)">${verdict}</span>`,'ok');
   showBanner(`LOGGED: ${rec.miss_m} m miss`); hideBanner(2500);
 
   // persist to the controller (best-effort; local copy is authoritative for export)
   fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)})
     .then(r=>r.json()).then(j=>{ if(j&&j.count) E('logCount').textContent=j.count; }).catch(()=>{});
 }
+
+// ── Registration OFFSET controls ──────────────────────────────────
+function refreshOffset(){
+  E('offVal').textContent = biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m';
+  const b=E('offsetBtn');
+  b.textContent='⊕ OFFSET: '+(offsetOn?'ON':'OFF');
+  b.classList.toggle('btn-gn', offsetOn);
+  if(targetMark) computeAim(true);
+  try{ drawOverlay(); }catch(e){}
+}
+E('offsetBtn').addEventListener('click', ()=>{ offsetOn=!offsetOn; refreshOffset(); });
+E('setOffBtn').addEventListener('click', ()=>{
+  if(!dropLog.length){ showBanner('Log a drop first to set an offset'); hideBanner(2200); return; }
+  const last=dropLog[dropLog.length-1];
+  // Registration: shift the aim by the negative of the last measured miss so the
+  // next round centres. Accumulates, so repeated SETs converge.
+  biasDown  = round2(biasDown  - last.miss_downwind_m);
+  biasCross = round2(biasCross - last.miss_cross_m);
+  if(!offsetOn) offsetOn=true;
+  refreshOffset();
+  showBanner(`Offset set from drop #${last.id}: ${biasDown.toFixed(1)} / ${biasCross.toFixed(1)} m`); hideBanner(2600);
+});
+E('offClrBtn').addEventListener('click', ()=>{ biasDown=0; biasCross=0; offsetOn=false; refreshOffset(); });
 
 E('expBtn').addEventListener('click', exportCSV);
 async function exportCSV(){
