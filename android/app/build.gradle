@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.dropaim.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.dropaim.app"
+        minSdk 26            // Android 8.0 — G20 class controllers
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+
+    // Keep the .webm/.svg/etc assets uncompressed-safe; nothing special needed.
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*']
+        }
+    }
+}
+
+// ── Sync the tested web app (../public) into the APK assets before every build ──
+// Single source of truth stays public/index.html; this copies a fresh snapshot.
+tasks.register('syncWebAssets', Copy) {
+    from "${rootProject.projectDir}/../public"
+    into "${projectDir}/src/main/assets/www"
+    include 'index.html', 'manifest.json', 'icon.svg'
+}
+tasks.named('preBuild') { dependsOn 'syncWebAssets' }
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+
+    // Embedded HTTP + WebSocket server (replicates server.js routes on localhost)
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+    implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
+
+    // RTSP -> MJPEG, using the same ffmpeg pipeline the Node server used.
+    // If this artifact fails to resolve (FFmpegKit was retired upstream), see
+    // android/README.md §Video for the drop-in alternative.
+    implementation 'com.arthenica:ffmpeg-kit-https:6.0-2.LTS'
+}
