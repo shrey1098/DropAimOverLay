@@ -1,11 +1,19 @@
 package com.dropaim.app
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
-import java.io.FileInputStream
-import kotlin.concurrent.thread
+import android.view.TextureView
+import androidx.annotation.OptIn
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import java.io.ByteArrayOutputStream
 
 /** Latest decoded JPEG frame + link state, shared with the /stream handler. */
 object FrameBus {
@@ -14,91 +22,101 @@ object FrameBus {
 }
 
 /**
- * RTSP -> MJPEG using the exact ffmpeg pipeline the Node server used, via
- * FFmpegKit. ffmpeg writes JPEGs into a pipe; we split them on SOI/EOI markers
- * (same logic as server.js) and publish the newest frame to FrameBus.
+ * RTSP video via Media3/ExoPlayer.
+ *
+ * ExoPlayer decodes the camera stream straight to a TextureView (hardware path,
+ * no ffmpeg). A grab loop then pulls frames off that TextureView, encodes them
+ * as JPEG and publishes them to FrameBus, so the WebView can display the feed
+ * AND read its pixels — which is what the Lucas-Kanade target tracker needs.
+ *
+ * The JPEG round-trip is the cost of keeping the in-WebView tracker. The planned
+ * native-video milestone removes it (native SurfaceView + OpenCV tracker).
  */
+@OptIn(UnstableApi::class)
 class VideoPipe(private val ctx: Context) {
-    @Volatile private var running = false
-    private var pipePath: String? = null
 
-    fun start() {
+    private var player: ExoPlayer? = null
+    private var textureView: TextureView? = null
+    private val handler = Handler(Looper.getMainLooper())
+    @Volatile private var running = false
+
+    /** Must be called on the main thread; [tv] has to be attached to the view tree. */
+    fun start(tv: TextureView) {
         if (running) return
         running = true
-        thread(name = "video") { runLoop() }
+        textureView = tv
+        openPlayer()
+        handler.postDelayed(grabber, GRAB_MS)
     }
 
-    fun stop() { running = false; FrameBus.connected = false }
-
-    private fun runLoop() {
-        while (running) {
-            try {
-                val pipe = FFmpegKitConfig.registerNewFFmpegPipe(ctx)
-                pipePath = pipe
-                val cmd = buildString {
-                    append("-hide_banner -loglevel error ")
-                    append("-fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 ")
-                    append("-rtsp_transport tcp -i ${Config.rtspUrl} -an ")
-                    append("-f image2pipe -vcodec mjpeg -q:v ${Config.VIDEO_Q} ")
-                    append("-vf fps=${Config.VIDEO_FPS},scale=${Config.VIDEO_W}:${Config.VIDEO_H} ")
-                    append(pipe)
-                }
-                Log.i(TAG, "ffmpeg: $cmd")
-                val session = FFmpegKit.executeAsync(cmd) { s ->
-                    Log.i(TAG, "ffmpeg exited: ${s.returnCode}")
-                    FrameBus.connected = false
-                }
-                // Reader: blocks until ffmpeg opens the pipe, then streams JPEGs.
-                readPipe(pipe)
-                session.cancel()
-            } catch (e: Exception) {
-                Log.e(TAG, "video error: ${e.message}")
-            }
-            FrameBus.connected = false
-            if (running) Thread.sleep(3000)   // retry, like the Node server
-        }
-    }
-
-    private fun readPipe(pipe: String) {
-        val input = FileInputStream(pipe)
-        val chunk = ByteArray(64 * 1024)
-        var buf = ByteArray(0)
+    private fun openPlayer() {
         try {
-            while (running) {
-                val r = input.read(chunk)
-                if (r < 0) break
-                FrameBus.connected = true
-                buf = buf + chunk.copyOfRange(0, r)
-                // Drain every complete JPEG, keep only the newest (avoids backlog).
-                var latest: ByteArray? = null
-                var from = 0
-                while (true) {
-                    val s = indexOf(buf, 0xFF, 0xD8, from)
-                    if (s < 0) break
-                    val e = indexOf(buf, 0xFF, 0xD9, s + 2)
-                    if (e < 0) break
-                    latest = buf.copyOfRange(s, e + 2)
-                    from = e + 2
-                }
-                if (latest != null) {
-                    buf = buf.copyOfRange(from, buf.size)
-                    FrameBus.latest = latest
-                }
-                if (buf.size > 5_000_000) buf = ByteArray(0)
+            player?.release()
+            val src = RtspMediaSource.Factory()
+                .setForceUseRtpTcp(true)          // matches the old -rtsp_transport tcp
+                .setTimeoutMs(8000)
+                .createMediaSource(MediaItem.fromUri(Config.rtspUrl))
+
+            val p = ExoPlayer.Builder(ctx).build().apply {
+                setVideoTextureView(textureView)
+                setMediaSource(src)
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}")
+                        FrameBus.connected = false
+                        // Retry, like the old ffmpeg supervisor did.
+                        if (running) handler.postDelayed({ if (running) openPlayer() }, 3000)
+                    }
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        Log.i(TAG, "isPlaying=$isPlaying")
+                    }
+                })
+                prepare()
+                playWhenReady = true
             }
-        } finally {
-            try { input.close() } catch (_: Exception) {}
+            player = p
+            Log.i(TAG, "RTSP opening ${Config.rtspUrl}")
+        } catch (e: Exception) {
+            Log.e(TAG, "openPlayer failed: ${e.message}")
+            if (running) handler.postDelayed({ if (running) openPlayer() }, 3000)
         }
     }
 
-    private fun indexOf(a: ByteArray, b0: Int, b1: Int, from: Int): Int {
-        var i = maxOf(0, from)
-        while (i < a.size - 1) {
-            if ((a[i].toInt() and 0xFF) == b0 && (a[i + 1].toInt() and 0xFF) == b1) return i
-            i++
+    /** Pulls the newest frame off the TextureView and republishes it as JPEG. */
+    private val grabber = object : Runnable {
+        override fun run() {
+            if (!running) return
+            try {
+                val tv = textureView
+                if (tv != null && tv.isAvailable) {
+                    // Scale down to the working resolution while grabbing.
+                    val bmp: Bitmap? = tv.getBitmap(Config.VIDEO_W, Config.VIDEO_H)
+                    if (bmp != null) {
+                        val bos = ByteArrayOutputStream(64 * 1024)
+                        bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
+                        FrameBus.latest = bos.toByteArray()
+                        FrameBus.connected = true
+                        bmp.recycle()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "grab failed: ${e.message}")
+            }
+            handler.postDelayed(this, GRAB_MS)
         }
-        return -1
     }
 
-    companion object { private const val TAG = "VideoPipe" }
+    fun stop() {
+        running = false
+        handler.removeCallbacksAndMessages(null)
+        try { player?.release() } catch (_: Exception) {}
+        player = null
+        FrameBus.connected = false
+    }
+
+    companion object {
+        private const val TAG = "VideoPipe"
+        private const val JPEG_QUALITY = 70
+        private val GRAB_MS = (1000L / Config.VIDEO_FPS)
+    }
 }

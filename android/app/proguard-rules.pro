@@ -1,4 +1,5 @@
-# Keep FFmpegKit + NanoHTTPD reflection-facing classes
--keep class com.arthenica.ffmpegkit.** { *; }
+# NanoHTTPD uses reflection for its handlers
 -keep class fi.iki.elonen.** { *; }
--dontwarn com.arthenica.ffmpegkit.**
+# Media3/ExoPlayer
+-keep class androidx.media3.** { *; }
+-dontwarn androidx.media3.**

@@ -7,7 +7,7 @@ with a tiny embedded server replicating what `server.js` used to do, natively:
 | Job | Old (Node) | Now (native, in-app) |
 |-----|------------|----------------------|
 | Serve the UI + `/stream` + `/api/*` | Express | NanoHTTPD on `127.0.0.1:3000` |
-| RTSP → MJPEG video | ffmpeg | FFmpegKit (same ffmpeg command) → MJPEG |
+| RTSP video | ffmpeg | Media3/ExoPlayer → TextureView → JPEG frames |
 | MAVLink UDP parse / relay / commands | dgram | `MavlinkService.kt` (faithful port) |
 | Telemetry to UI | ws | NanoHTTPD WebSocket `/telemetry` |
 | Drop log | `drops.jsonl` | app-private `drops.jsonl` |
@@ -48,19 +48,23 @@ manifest.json,icon.svg}` into `app/src/main/assets/www/` before every build, so
 bash sync-web.sh
 ```
 
-## Video (RTSP) — the one likely sticking point
+## Video (RTSP)
 
-The app uses **FFmpegKit** to run the same ffmpeg command that already worked
-with your camera (`-rtsp_transport tcp … -f image2pipe -vcodec mjpeg`). FFmpegKit
-was retired upstream in 2025; the Maven Central artifacts for pinned versions are
-still published, so `com.arthenica:ffmpeg-kit-https:6.0-2.LTS` should resolve.
+Media3/ExoPlayer decodes the RTSP stream to a `TextureView` (hardware decode, no
+ffmpeg binary). `VideoPipe` grabs frames off that surface at `VIDEO_FPS`, encodes
+them as JPEG and publishes them to the embedded server's `/stream`, so the WebView
+can both display the feed **and read its pixels** — which the Lucas-Kanade target
+tracker requires.
 
-If it does **not** resolve, two options:
-- Try `com.arthenica:ffmpeg-kit-full:6.0-2.LTS` (larger, all codecs), or a
-  community mirror repo added in `settings.gradle`.
-- Swap `VideoPipe.kt` to decode RTSP with `androidx.media3:media3-exoplayer-rtsp`
-  rendered to a `TextureView`, grabbing frames with `PixelCopy` → JPEG. This uses
-  only Google libraries but ExoPlayer's RTSP is less tolerant of some cameras.
+RTP-over-TCP is forced, matching the old `-rtsp_transport tcp`.
+
+That JPEG round-trip is the price of keeping the tracker in the WebView; it is
+what the planned native-video milestone removes (native SurfaceView + OpenCV
+tracker), at which point the feed goes straight to the screen with no re-encode.
+
+If the camera does not open, check logcat for `VideoPipe` — the player logs the
+RTSP error code and retries every 3 s. Some cameras need the exact stream path
+(`/main`, `/stream1`, …); set it in `Config.kt`.
 
 ## Ports / config
 

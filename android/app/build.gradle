@@ -53,8 +53,9 @@ dependencies {
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
     implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
 
-    // RTSP -> MJPEG, using the same ffmpeg pipeline the Node server used.
-    // If this artifact fails to resolve (FFmpegKit was retired upstream), see
-    // android/README.md §Video for the drop-in alternative.
-    implementation 'com.arthenica:ffmpeg-kit-https:6.0-2.LTS'
+    // RTSP video. Media3/ExoPlayer decodes the camera stream to a TextureView;
+    // VideoPipe grabs frames from it as JPEG so the WebView tracker can read
+    // pixels. (Replaces FFmpegKit, whose artifacts were withdrawn upstream.)
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.4.1'
 }

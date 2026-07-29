@@ -3,11 +3,14 @@ package com.dropaim.app
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
+import android.view.TextureView
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 
 /**
@@ -18,6 +21,7 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var videoSurface: TextureView
     private val mav = MavlinkService()
     private lateinit var video: VideoPipe
     private var server: WebServer? = null
@@ -31,7 +35,6 @@ class MainActivity : AppCompatActivity() {
 
         // Bring up the native services first, then the embedded server.
         mav.start()
-        video.start()
         try {
             server = WebServer(applicationContext, mav).also { it.start(SOCKET_TIMEOUT, false) }
             Log.i(TAG, "embedded server on :${Config.HTTP_PORT}")
@@ -52,7 +55,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        setContentView(webView)
+        // ExoPlayer decodes RTSP into this TextureView. It sits *behind* the
+        // WebView (which paints the feed from /stream plus the overlay), and is
+        // only there so VideoPipe has a surface to grab frames from.
+        videoSurface = TextureView(this)
+
+        val root = FrameLayout(this)
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        root.addView(videoSurface, FrameLayout.LayoutParams(lp))
+        root.addView(webView, FrameLayout.LayoutParams(lp))
+        setContentView(root)
+
+        // Start video once the surface is live, then load the UI.
+        video.start(videoSurface)
         // Small delay lets the server bind before the first request.
         webView.postDelayed({ webView.loadUrl("http://127.0.0.1:${Config.HTTP_PORT}/") }, 400)
     }
