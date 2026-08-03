@@ -36,6 +36,7 @@ const S = window.SIM = {
   raf: null,
   keys: {},
   lastDrop: null,
+  fall: null,            // in-flight round being animated
 };
 
 const D2R = Math.PI / 180;
@@ -215,6 +216,9 @@ function tick() {
   if (!S.on) return;
   flyFromKeys();
   renderScene();
+  // The round is drawn into the frame BEFORE the tracker runs, so it appears in
+  // the feed just as it would through the real camera.
+  try { drawFall(); } catch (e) { console.error('[SIM/fall]', e); S.fall = null; }
   pushTelemetry();
   try { processFrame(); } catch (e) { console.error('[SIM]', e); }
   S.raf = setTimeout(tick, 1000 / 15);
@@ -241,10 +245,42 @@ function nudge(fwd, right) {
 }
 
 // ── the drop ──────────────────────────────────────────────────────
+// Full fall trajectory (not just the endpoint) so the round can be animated
+// falling away from the aircraft. Same integrator and forces as the app's
+// rk4Drop; the endpoint of this trajectory IS the impact, so what the trainee
+// watches and what gets scored are the same thing.
+function fallTrajectory(h, mass, cd, area, wSpd) {
+  const DT = 0.005, G = 9.80665;
+  let x = 0, y = h, vx0 = 0, vy = 0, t = 0;
+  const path = [{ t: 0, x: 0, y: h }];
+  const acc = (vvx, vvy, yy) => {
+    const rho = getRho(Math.max(0, yy));
+    const wL = windAtAlt(wSpd, Math.max(0.1, yy));
+    const rx = vvx - wL, ry = vvy;
+    const sp = Math.sqrt(rx * rx + ry * ry);
+    const F = sp < 1e-9 ? 0 : 0.5 * rho * sp * sp * cd * area;
+    return { ax: sp < 1e-9 ? 0 : -F * (rx / sp) / mass,
+             ay: -G + (sp < 1e-9 ? 0 : -F * (ry / sp) / mass) };
+  };
+  let i = 0;
+  while (y > 0 && t < 60) {
+    const a1 = acc(vx0, vy, y);
+    const a2 = acc(vx0 + a1.ax * DT / 2, vy + a1.ay * DT / 2, y + vy * DT / 2);
+    const a3 = acc(vx0 + a2.ax * DT / 2, vy + a2.ay * DT / 2, y + (vy + a1.ay * DT / 2) * DT / 2);
+    const a4 = acc(vx0 + a3.ax * DT, vy + a3.ay * DT, y + (vy + a2.ay * DT / 2) * DT);
+    vx0 += (DT / 6) * (a1.ax + 2 * a2.ax + 2 * a3.ax + a4.ax);
+    vy  += (DT / 6) * (a1.ay + 2 * a2.ay + 2 * a3.ay + a4.ay);
+    x += vx0 * DT; y += vy * DT; t += DT;
+    if (++i % 4 === 0) path.push({ t, x, y: Math.max(0, y) });
+  }
+  path.push({ t, x, y: 0 });
+  return path;
+}
+
 // Integrates the fall with TRUTH parameters (not the operator's dialled ones)
 // so the result rewards correct setup without ever being exactly perfect.
 function simulateDrop() {
-  if (!S.on) return;
+  if (!S.on || S.fall) return;                  // ignore while one is in the air
   const alt = S.drone.alt;
   const mass = parseFloat(V('pm'));
   const cdDial = getEffCd(), areaDial = parseFloat(V('pa'));
@@ -255,14 +291,16 @@ function simulateDrop() {
   const wsT = S.wind.spd * (0.85 + Math.random() * 0.30);
   const wdT = S.wind.dir + (Math.random() - 0.5) * 10;
 
-  const { drift, tof } = rk4Drop(alt, mass, cdT, areaT, 0, wsT);
+  const path = fallTrajectory(alt, mass, cdT, areaT, wsT);
+  const drift = path[path.length - 1].x, tof = path[path.length - 1].t;
 
-  // downwind displacement + the drone's own residual motion at release
+  // release point + the drone's own residual motion carried by the round
   const dw = ((wdT + 180) % 360) * D2R;
-  let impN = S.drone.n + drift * Math.cos(dw);
-  let impE = S.drone.e + drift * Math.sin(dw);
-  impN += (telemetry.vx || 0) * tof;
-  impE += (telemetry.vy || 0) * tof;
+  const relN = S.drone.n, relE = S.drone.e;
+  const vN = telemetry.vx || 0, vE = telemetry.vy || 0;
+
+  const impN = relN + drift * Math.cos(dw) + vN * tof;
+  const impE = relE + drift * Math.sin(dw) + vE * tof;
 
   const missN = impN - S.target.n, missE = impE - S.target.e;
   const miss = Math.hypot(missN, missE);
@@ -270,15 +308,112 @@ function simulateDrop() {
   const dwn = missN * Math.cos(dw) + missE * Math.sin(dw);
   const crs = missN * Math.cos(dw + Math.PI / 2) + missE * Math.sin(dw + Math.PI / 2);
 
-  bakeImpact(impN, impE);
-  S.lastDrop = { miss, brg, dwn, crs, tof, drift };
+  // Hand it to the animator; scoring happens when it lands.
+  S.fall = {
+    path, dw, relN, relE, vN, vE, alt, tof,
+    t0: performance.now(), impN, impE,
+    res: { miss, brg, dwn, crs, tof, drift }, boom: -1,
+  };
+  status(`Round away — ${tof.toFixed(1)} s to impact…`, 'warn');
+  showBanner('ROUND AWAY'); hideBanner(1200);
+}
 
-  const verdict = miss < 2 ? '✔ EXCELLENT' : miss < 5 ? '✔ HIT (inside 5 m)' : '✘ MISS';
-  const col = miss < 5 ? 'var(--gn)' : 'var(--rd)';
-  status(`<b style="color:${col}">${verdict}</b> — ${miss.toFixed(1)} m @ ${brg.toFixed(0)}°<br>` +
-         `downwind ${dwn >= 0 ? '+' : ''}${dwn.toFixed(1)} m · cross ${crs.toFixed(1)} m<br>` +
-         `TOF ${tof.toFixed(1)} s · true drift ${drift.toFixed(1)} m`, miss < 5 ? 'ok' : 'err');
-  showBanner(`${verdict} — ${miss.toFixed(1)} m`); hideBanner(3000);
+// Draws the falling round (and the impact burst) into the video frame, so it
+// appears in the feed exactly as it would through the real camera.
+function drawFall() {
+  const f = S.fall; if (!f) return;
+  const W = VC.width, H = VC.height;
+  const now = performance.now();
+  const tSec = (now - f.t0) / 1000;
+  const zoom = parseFloat(V('zoom'));
+  const h = S.drone.hdg * D2R, cs = Math.cos(h), sn = Math.sin(h);
+
+  // world -> screen for a point at height `hgt` above ground
+  const project = (n, e, hgt) => {
+    const dist = Math.max(6, f.alt - hgt);            // metres from the camera
+    const P = W / (2 * dist) * zoom;
+    const dn = n - S.drone.n, de = e - S.drone.e;
+    const up = dn * cs + de * sn;
+    const rt = dn * Math.cos(h + Math.PI / 2) + de * Math.sin(h + Math.PI / 2);
+    return { x: W / 2 + rt * P, y: H / 2 - up * P };
+  };
+  const at = t => {                                    // trajectory sample at time t
+    const p = f.path;
+    let i = Math.min(p.length - 1, Math.max(0, Math.round(t / f.tof * (p.length - 1))));
+    return p[i];
+  };
+
+  if (tSec < f.tof) {
+    // ── in flight ──────────────────────────────────────────────
+    const s = at(tSec);
+    const n = f.relN + s.x * Math.cos(f.dw) + f.vN * s.t;
+    const e = f.relE + s.x * Math.sin(f.dw) + f.vE * s.t;
+    const pt = project(n, e, s.y);
+    const frac = s.y / f.alt;                          // 1 at release -> 0 at impact
+    const size = 3.5 + 17 * frac;
+
+    // motion trail
+    for (let k = 1; k <= 6; k++) {
+      const tt = tSec - k * 0.06; if (tt <= 0) break;
+      const q = at(tt);
+      const qn = f.relN + q.x * Math.cos(f.dw) + f.vN * q.t;
+      const qe = f.relE + q.x * Math.sin(f.dw) + f.vE * q.t;
+      const qp = project(qn, qe, q.y);
+      const qs = (3.5 + 17 * (q.y / f.alt)) * 0.75;
+      vx.fillStyle = `rgba(25,25,30,${0.30 * (1 - k / 7)})`;
+      vx.beginPath(); vx.arc(qp.x, qp.y, qs, 0, 7); vx.fill();
+    }
+    // the round
+    vx.fillStyle = '#1b1b20';
+    vx.beginPath(); vx.arc(pt.x, pt.y, size, 0, 7); vx.fill();
+    vx.strokeStyle = 'rgba(120,124,134,0.9)'; vx.lineWidth = Math.max(1, size * 0.12);
+    vx.stroke();
+    vx.fillStyle = 'rgba(190,196,206,0.55)';
+    vx.beginPath(); vx.arc(pt.x - size * 0.28, pt.y - size * 0.3, size * 0.32, 0, 7); vx.fill();
+
+    // growing shadow on the ground at the predicted impact point
+    const gp = project(f.impN, f.impE, 0);
+    const gs = 2 + 7 * (1 - frac);
+    vx.fillStyle = `rgba(0,0,0,${0.35 * (1 - frac)})`;
+    vx.beginPath(); vx.ellipse(gp.x, gp.y, gs, gs * 0.75, 0, 0, 7); vx.fill();
+    return;
+  }
+
+  // ── impact ─────────────────────────────────────────────────
+  if (f.boom < 0) {                                   // first frame after landing
+    f.boom = now;
+    bakeImpact(f.impN, f.impE);
+    const r = f.res;
+    S.lastDrop = r;
+    const verdict = r.miss < 2 ? '✔ EXCELLENT' : r.miss < 5 ? '✔ HIT (inside 5 m)' : '✘ MISS';
+    const col = r.miss < 5 ? 'var(--gn)' : 'var(--rd)';
+    status(`<b style="color:${col}">${verdict}</b> — ${r.miss.toFixed(1)} m @ ${r.brg.toFixed(0)}°<br>` +
+           `downwind ${r.dwn >= 0 ? '+' : ''}${r.dwn.toFixed(1)} m · cross ${r.crs.toFixed(1)} m<br>` +
+           `TOF ${r.tof.toFixed(1)} s · true drift ${r.drift.toFixed(1)} m`, r.miss < 5 ? 'ok' : 'err');
+    showBanner(`${verdict} — ${r.miss.toFixed(1)} m`); hideBanner(3200);
+  }
+  const k = (now - f.boom) / 1000;
+  const gp = project(f.impN, f.impE, 0);
+  if (k < 1.3) {
+    // dust burst + expanding rings
+    const e1 = Math.min(1, k / 0.9);
+    vx.save();
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * 7 + (i % 3), d = (4 + 44 * e1) * (0.45 + (i % 5) / 7);
+      const rr = 3 + 9 * e1;
+      vx.fillStyle = `rgba(168,158,136,${0.42 * (1 - k / 1.3)})`;
+      vx.beginPath(); vx.arc(gp.x + Math.cos(a) * d, gp.y + Math.sin(a) * d * 0.72, rr, 0, 7); vx.fill();
+    }
+    [0, 0.14].forEach((dly, i) => {
+      const kk = k - dly; if (kk < 0 || kk > 0.7) return;
+      const r = 6 + 70 * (kk / 0.7);
+      vx.strokeStyle = `rgba(255,255,255,${0.55 * (1 - kk / 0.7)})`;
+      vx.lineWidth = 2.5 - i; vx.beginPath(); vx.arc(gp.x, gp.y, r, 0, 7); vx.stroke();
+    });
+    vx.restore();
+  } else {
+    S.fall = null;                                     // done
+  }
 }
 
 // Burn the crater into the terrain so it persists and tracks with the ground.
@@ -321,6 +456,7 @@ function start() {
 }
 function stop() {
   S.on = false;
+  S.fall = null;
   clearTimeout(S.raf);
   E('simRows').style.display = 'none';
   E('simBtn').textContent = '▶ START SIMULATOR';
@@ -369,6 +505,7 @@ function bindUI() {
   });
   E('simDrop').addEventListener('click', simulateDrop);
   E('simReset').addEventListener('click', () => {
+    S.fall = null;
     loadDummy();
     if (S.scene === 'sat') status('Reloaded dummy range — reload your image for satellite mode.', 'warn');
     S.drone.n = (Math.random() - 0.5) * 9;   // a few metres off the target
