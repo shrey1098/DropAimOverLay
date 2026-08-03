@@ -145,10 +145,10 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
-    <div class="f"><label>Mass <span id="pmL">0.50 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="0.5" step="0.05"></div>
-    <div class="f"><label>Cd <span id="cdL">0.47</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.47" step="0.01"></div>
+    <div class="f"><label>Mass <span id="pmL">4.00 kg</span></label><input type="range" id="pm" min="0.05" max="5" value="4" step="0.05"></div>
+    <div class="f"><label>Cd <span id="cdL">0.20</span></label><input type="range" id="cd" min="0.05" max="1.5" value="0.20" step="0.01"></div>
     <div class="f"><label>Tumble <span id="tmL">0%</span></label><input type="range" id="tm" min="0" max="100" value="0" step="5"></div>
-    <div class="f"><label>Area <span id="paL">0.010 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.01" step="0.001"></div>
+    <div class="f"><label>Area <span id="paL">0.030 m²</span></label><input type="range" id="pa" min="0.001" max="0.15" value="0.030" step="0.001"></div>
   </div></div>
 
   <div class="sec"><div class="sh">🌡 ENVIRONMENT</div><div class="sb">
@@ -170,8 +170,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
   <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
     <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="1" max="30" value="22" step="1"></div>
-    <div class="f"><label>Forward <span id="cfL">0.00 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0" step="0.01"></div>
-    <div class="f"><label>Right <span id="crL">0.00 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="0" step="0.01"></div>
+    <div class="f"><label>Forward <span id="cfL">+0.15 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0.15" step="0.01"></div>
+    <div class="f"><label>Right <span id="crL">-0.50 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="-0.5" step="0.01"></div>
   </div></div>
 
   <div class="sec"><div class="sh">🎯 CONTROLS</div><div class="sb">
@@ -186,6 +186,54 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <button class="btn btn-gd" id="unlockBtn">🔓 UNLOCK → LOITER</button>
     <button class="btn btn-rd" id="rtlBtn" style="margin-top:4px">🏠 RTL — RETURN HOME</button>
     <div style="font-size:9px;color:var(--mt);text-align:center">MODE <span id="mMode" style="color:var(--ac)">—</span></div>
+  </div></div>
+
+  <div class="sec"><div class="sh">📝 DROP LOG</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Records each drop for accuracy calibration. Log the solution at release, then tap where the round actually landed.</div>
+    <div style="display:flex;gap:5px">
+      <button class="btn" id="offsetBtn" style="flex:1">⊕ OFFSET: OFF</button>
+      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px" title="add the last drop's miss to the offset (registration)">SET</button>
+      <button class="btn btn-rd" id="offClrBtn" style="width:auto;padding:8px 10px" title="zero the offset">0</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">offset <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
+    <button class="btn btn-gn" id="logRelBtn">⦿ LOG RELEASE</button>
+    <button class="btn" id="markImpBtn" disabled style="opacity:.4">◎ MARK IMPACT — TAP LANDING</button>
+    <div class="aimr" id="logR"></div>
+    <div style="display:flex;gap:5px">
+      <button class="btn btn-gd" id="expBtn" style="flex:1">⬇ EXPORT CSV</button>
+      <button class="btn btn-rd" id="logClrBtn" style="width:auto;padding:8px 12px" title="clear on-screen counter">✕</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">LOGGED <span id="logCount" style="color:var(--gn)">0</span> drops this session</div>
+  </div></div>
+
+  <div class="sec"><div class="sh">🎓 TRAINING SIMULATOR</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Synthetic feed + telemetry. Marking, aim, LOCK, offset and logging behave exactly as live.</div>
+    <button class="btn btn-gd" id="simBtn">▶ START SIMULATOR</button>
+    <div id="simRows" style="display:none;flex-direction:column;gap:7px">
+      <div class="f"><label>Scene</label><select id="simScene">
+        <option value="dummy" selected>Dummy range — painted target</option>
+        <option value="sat">Satellite image (load below)</option>
+      </select></div>
+      <div id="simSatRow" style="display:none;flex-direction:column;gap:5px">
+        <input type="file" id="simFile" accept="image/*" style="font-size:9px">
+        <div class="f"><label>Image ground width <span id="simGwL">80 m</span></label><input type="range" id="simGw" min="20" max="500" value="80" step="5"></div>
+      </div>
+      <div class="f"><label>Sim altitude <span id="simAltL">150 m</span></label><input type="range" id="simAlt" min="50" max="400" value="150" step="5"></div>
+      <div class="f"><label>Sim wind <span id="simWsL">4.0 m/s</span></label><input type="range" id="simWs" min="0" max="12" value="4" step="0.5"></div>
+      <div class="f"><label>Sim wind dir FROM <span id="simWdL">200°</span></label><input type="range" id="simWd" min="0" max="359" value="200" step="1"></div>
+      <div class="f"><label>Shake <span id="simShL">50%</span></label><input type="range" id="simSh" min="0" max="100" value="50" step="5"></div>
+      <div style="font-size:9px;color:var(--mt);text-align:center">FLY: arrow keys / drag below</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+        <div></div><button class="btn" id="simUp" style="padding:6px">▲</button><div></div>
+        <button class="btn" id="simLeft" style="padding:6px">◀</button>
+        <button class="btn" id="simCtr" style="padding:6px" title="jump onto the aim point">◎</button>
+        <button class="btn" id="simRight" style="padding:6px">▶</button>
+        <div></div><button class="btn" id="simDown" style="padding:6px">▼</button><div></div>
+      </div>
+      <button class="btn btn-rd" id="simDrop">💣 SIMULATE DROP</button>
+      <div class="aimr" id="simR"></div>
+      <button class="btn" id="simReset">↺ NEW TARGET / RESET</button>
+    </div>
   </div></div>
 </div>
 </div>
@@ -208,6 +256,11 @@ let targetMark      = null; // {x,y} canvas pixels
 let targetMarkVideo = null; // {x,y} video pixels (for tracker)
 let aimPoint        = null; // {x,y} canvas pixels
 let result          = null; // physics result
+// Registration OFFSET (bias) — wind frame, metres. Shifts the aim to cancel the
+// average measured miss. Toggled by the OFFSET button; set from a sighting drop.
+let offsetOn        = false;
+let biasDown        = 0;    // + = aim further downwind
+let biasCross       = 0;    // + = aim further crosswind (90° cw of downwind)
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -242,19 +295,34 @@ async function startStream() {
     const reader = res.body.getReader();
     let buf = new Uint8Array(0);
     const cat = (a,b) => { const c=new Uint8Array(a.length+b.length); c.set(a); c.set(b,a.length); return c; };
+    const find = (a,b0,b1,from) => { for(let i=from;i<a.length-1;i++) if(a[i]===b0&&a[i+1]===b1) return i; return -1; };
+
+    // Always display the NEWEST decoded frame. Decoding + tracking can take
+    // longer than one frame interval; if we awaited every frame the reader
+    // would fall behind and the feed would drift further from live the longer
+    // the app ran. Instead: skip stale frames, and never queue a second decode.
+    let decoding = false;
 
     while(true) {
       const {done,value} = await reader.read();
       if(done) break;
       buf = cat(buf, value);
-      let s = -1;
-      for(let i=0;i<buf.length-1;i++){
-        if(buf[i]===0xFF&&buf[i+1]===0xD8) s=i;
-        if(s!==-1&&buf[i]===0xFF&&buf[i+1]===0xD9){
-          const jpg=buf.slice(s,i+2);
-          buf=buf.slice(i+2); s=-1; i=-1;
-          await renderFrame(jpg);
-          break;
+
+      // Pull every complete JPEG out of the buffer, keep only the last one.
+      let latest = null, from = 0;
+      for(;;){
+        const s = find(buf,0xFF,0xD8,from);
+        if(s < 0) break;
+        const e = find(buf,0xFF,0xD9,s+2);
+        if(e < 0) break;
+        latest = buf.slice(s, e+2);
+        from = e + 2;
+      }
+      if(latest){
+        buf = buf.slice(from);              // drop the frames we skipped over
+        if(!decoding){
+          decoding = true;
+          renderFrame(latest).catch(()=>{}).finally(()=>{ decoding = false; });
         }
       }
       if(buf.length>2e6) buf=new Uint8Array(0);
@@ -266,13 +334,20 @@ async function startStream() {
 }
 
 async function renderFrame(jpg) {
+  // Training simulator owns the feed while it is running.
+  if(window.SIM && SIM.on) return;
   try {
     const bmp = await createImageBitmap(new Blob([jpg],{type:'image/jpeg'}));
     VC.width=bmp.width; VC.height=bmp.height;
     vx.drawImage(bmp,0,0);
     bmp.close();
   } catch(e) { return; } // corrupt frame — skip it
+  processFrame();
+}
 
+// Everything after the frame is in VC: paint, track, overlay. Shared by the
+// live feed and the simulator so both exercise the identical code path.
+function processFrame() {
   // Draw video FIRST — a tracker/physics error must never freeze the feed
   ctx.drawImage(VC,0,0,MC.width,MC.height);
 
@@ -458,6 +533,7 @@ function getWind(){
   };
 }
 
+// Single-phase drop: one drag regime (cd, area) for the whole fall.
 function rk4Drop(h,mass,cd,area,initVx,wSpd){
   let x=0,y=h,vvx=initVx,vy=0,t=0;
   const acc=(vvx,vy,y)=>{
@@ -482,6 +558,20 @@ function rk4Drop(h,mass,cd,area,initVx,wSpd){
   return{drift:x, tof:t};
 }
 
+// The RK4 fall simulation is the heaviest thing on the per-frame budget, and
+// it runs on the same thread that decodes and paints the video. Its inputs
+// barely change between frames, so memoise on a quantised key (0.5 m altitude,
+// 0.1 m/s wind — both far below sensor noise). Frees the frame budget for the
+// live feed without changing the aim point the operator sees.
+let _rk4Key=null, _rk4Val=null;
+function rk4DropCached(h,mass,cd,area,initVx,wSpd){
+  const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(wSpd*10),
+             V('tmp'),V('el'),V('tr')].join('|');
+  if(key===_rk4Key && _rk4Val) return _rk4Val;
+  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,wSpd);
+  return _rk4Val;
+}
+
 function computeAim(silent=false){
   if(!targetMark) return;
 
@@ -503,8 +593,8 @@ function computeAim(silent=false){
   // At release, payload gets small downwind kick from pendulum effect
   const initVel=G*Math.sin(tiltRad)*0.05;
 
-  // RK4 simulation — drift is positive, in downwind direction
-  const {drift,tof}=rk4Drop(height,mass,cd,area,initVel,wSpd);
+  // RK4 simulation — single drag regime, drift is positive (downwind direction)
+  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd);
 
   // ── COORDINATE TRANSFORM ──────────────────────────────────────
   // Convert downwind drift to North/East world coordinates
@@ -524,8 +614,19 @@ function computeAim(silent=false){
   const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
 
   // Aim vector in world coords (from target to where drone should be)
-  const aimN=-dNorth-camOffN;  // upwind + camera offset
-  const aimE=-dEast -camOffE;
+  const aimNraw=-dNorth-camOffN;  // upwind + camera offset (model only)
+  const aimEraw=-dEast -camOffE;
+
+  // Registration OFFSET: add the session bias (wind frame → world) so the green
+  // marker and the logged aim reflect the correction. The un-offset aim is kept
+  // so the raw model error stays recoverable from the log.
+  const offApplied = offsetOn && (biasDown!==0 || biasCross!==0);
+  let aimN=aimNraw, aimE=aimEraw;
+  if(offApplied){
+    const dwR=((wDir+180)%360)*PI/180;
+    aimN += biasDown*Math.cos(dwR) + biasCross*Math.cos(dwR+PI/2);
+    aimE += biasDown*Math.sin(dwR) + biasCross*Math.sin(dwR+PI/2);
+  }
 
   // ── PROJECT TO CAMERA FRAME ───────────────────────────────────
   // Camera up = heading direction (what's "forward" for the drone)
@@ -535,6 +636,8 @@ function computeAim(silent=false){
 
   const aimCamUp =aimN*camUpN +aimE*camUpE;  // metres forward in camera
   const aimCamRt =aimN*camRtN +aimE*camRtE;  // metres right in camera
+  const rawCamUp =aimNraw*camUpN +aimEraw*camUpE;  // model-only aim (no offset)
+  const rawCamRt =aimNraw*camRtN +aimEraw*camRtE;
 
   // ── CONVERT TO CANVAS PIXELS ──────────────────────────────────
   // C20 ~90° HFOV at 1× → ground width at height h = 2*h*tan(45°) = 2h.
@@ -548,8 +651,10 @@ function computeAim(silent=false){
     x: targetMark.x + aimCamRt * pxPerM,      // right = +x
     y: targetMark.y - aimCamUp * pxPerM,       // forward = -y (canvas Y inverted)
   };
+  const rawAim={ x: targetMark.x + rawCamRt*pxPerM, y: targetMark.y - rawCamUp*pxPerM };
 
-  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
+  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM,
+          rawAim, offApplied, biasDown, biasCross};
 
   // Update HUD
   E('hDrift').textContent=drift.toFixed(1);
@@ -697,6 +802,9 @@ function drawHz(){
 MC.addEventListener('click', e => {
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
+  // In impact-marking mode a tap records where the round LANDED — it must not
+  // create a new target.
+  if(markImpactMode){ recordImpact(cx,cy); return; }
   targetMark={x:cx,y:cy};
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
@@ -718,6 +826,205 @@ E('clearBtn').addEventListener('click',()=>{
   E('aimR').classList.remove('show');
   showBanner('TAP VIDEO TO MARK TARGET');
 });
+
+// ══════════════════════════════════════════════════════════════════
+// DROP LOG — per-drop accuracy recording for drag calibration
+// ══════════════════════════════════════════════════════════════════
+// Two-step capture per drop:
+//   1) LOG RELEASE  — snapshots the firing solution + live telemetry at the
+//                      instant of release (what the app predicted).
+//   2) MARK IMPACT  — operator taps where the round actually landed; the app
+//                      computes the miss vector, decomposed onto the wind axis
+//                      (downwind = how far past the target, crosswind = sideways).
+// The downwind residual is the calibration signal: + means the round drifted
+// MORE than predicted (model under-corrects), − means it fell short.
+let dropLog = [];
+let pendingRelease = null;     // solution snapshot awaiting an impact mark
+let markImpactMode = false;
+let logSeq = 0;
+
+function logStatus(html, cls){
+  const b=E('logR'); b.classList.add('show');
+  b.style.color = cls==='err' ? 'var(--rd)' : (cls==='warn' ? 'var(--gd)' : 'var(--gn)');
+  b.style.borderColor = cls==='err' ? 'rgba(255,59,85,.4)' : 'rgba(0,255,136,.3)';
+  b.style.background  = cls==='err' ? 'rgba(255,59,85,.06)' : 'rgba(0,255,136,.05)';
+  b.innerHTML = html;
+}
+
+// Capture everything about the shot at the moment of release.
+E('logRelBtn').addEventListener('click', ()=>{
+  if(!targetMark || !result){
+    logStatus('Mark a target and CALCULATE AIM before logging a release.','err');
+    return;
+  }
+  logSeq++;
+  pendingRelease = {
+    id: logSeq,
+    t_release: new Date().toISOString(),
+    // live vehicle state at release
+    alt_agl_m:  round1(telemetry.altAGL),
+    wind_ms:    round1(result.wSpd),
+    wind_dir_from_deg: Math.round(result.wDir),
+    wind_src:   result.wSrc,
+    heading_deg: round1(telemetry.heading),
+    roll_deg:   round1(telemetry.roll),
+    pitch_deg:  round1(telemetry.pitch),
+    yaw_deg:    round1(telemetry.yaw),
+    gnd_spd_ms: round2(telemetry.groundspeed),
+    vx_ms:      round2(telemetry.vx),
+    vy_ms:      round2(telemetry.vy),
+    // payload + environment (what the model used)
+    mass_kg:    parseFloat(V('pm')),
+    cd:         parseFloat(V('cd')),
+    tumble_pct: parseFloat(V('tm')),
+    eff_cd:     round2(getEffCd()),
+    area_m2:    parseFloat(V('pa')),
+    temp_c:     parseFloat(V('tmp')),
+    site_elev_m: parseFloat(V('el')),
+    terrain_z0: parseFloat(V('tr')),
+    zoom_x:     parseFloat(V('zoom')),
+    px_per_m:   round2(result.pxPerM),
+    // the prediction
+    pred_drift_m: round2(result.drift),
+    tof_s:      round2(result.tof),
+    hover_tilt_deg: round1(result.tiltDeg),
+    // registration offset applied to the aim at release
+    offset_applied: result.offApplied,
+    offset_down_m:  result.offApplied ? round2(result.biasDown)  : 0,
+    offset_cross_m: result.offApplied ? round2(result.biasCross) : 0,
+    // geometry (canvas px) — target, offset aim (flown), and raw model aim
+    target_px_x: Math.round(targetMark.x), target_px_y: Math.round(targetMark.y),
+    aim_px_x:    Math.round(aimPoint.x),    aim_px_y:    Math.round(aimPoint.y),
+    aim_raw_px_x: Math.round(result.rawAim.x), aim_raw_px_y: Math.round(result.rawAim.y),
+    _pxPerM: result.pxPerM, _hdg: telemetry.heading||0, _wDir: result.wDir,
+  };
+  // arm impact marking
+  markImpactMode = true;
+  const mb=E('markImpBtn'); mb.disabled=false; mb.style.opacity='1';
+  mb.classList.add('btn-gn'); mb.textContent='◎ TAP WHERE IT LANDED';
+  logStatus(`Release #${pendingRelease.id} logged — alt ${pendingRelease.alt_agl_m} m, wind ${pendingRelease.wind_ms} m/s @ ${pendingRelease.wind_dir_from_deg}°.<br><b>Now tap the impact point on the video.</b>`,'warn');
+  showBanner('RELEASE LOGGED — TAP THE IMPACT POINT'); hideBanner(3000);
+});
+
+// Toggle marking manually (e.g. to re-arm without re-logging)
+E('markImpBtn').addEventListener('click', ()=>{
+  if(!pendingRelease){ logStatus('Log a release first.','err'); return; }
+  markImpactMode = !markImpactMode;
+  const mb=E('markImpBtn');
+  mb.textContent = markImpactMode ? '◎ TAP WHERE IT LANDED' : '◎ MARK IMPACT — TAP LANDING';
+  showBanner(markImpactMode ? 'TAP THE IMPACT POINT' : 'impact marking off'); hideBanner(1800);
+});
+
+// Operator tapped where the round landed → compute the miss vector.
+function recordImpact(ix, iy){
+  markImpactMode = false;
+  const mb=E('markImpBtn'); mb.disabled=true; mb.style.opacity='.4';
+  mb.classList.remove('btn-gn'); mb.textContent='◎ MARK IMPACT — TAP LANDING';
+  const rec = pendingRelease; pendingRelease=null;
+  if(!rec) return;
+
+  const ppm = rec._pxPerM, hdg = rec._hdg*PI/180;
+  // impact offset from the marked target, in metres, camera frame
+  const camRt = (ix - rec.target_px_x)/ppm;   // +right on screen
+  const camUp = -(iy - rec.target_px_y)/ppm;  // +forward on screen (canvas Y inverted)
+  // rotate camera frame → world North/East using heading (same basis as computeAim)
+  const missN = camUp*Math.cos(hdg) + camRt*Math.cos(hdg+PI/2);
+  const missE = camUp*Math.sin(hdg) + camRt*Math.sin(hdg+PI/2);
+  const miss_m = Math.hypot(missN, missE);
+  const miss_bearing = (Math.atan2(missE, missN)*180/PI + 360) % 360;  // target→impact, °T
+  // project onto the wind axis: downwind = where the wind blows TO
+  const dw = (rec._wDir + 180) * PI/180;
+  const miss_downwind = missN*Math.cos(dw)     + missE*Math.sin(dw);
+  const miss_cross    = missN*Math.cos(dw+PI/2)+ missE*Math.sin(dw+PI/2);
+  const verdict = miss_downwind >  0.3 ? 'UNDER-corrected (drifted past target)'
+                : miss_downwind < -0.3 ? 'OVER-corrected (fell short)'
+                : 'on the wind axis';
+
+  // Raw (model-only) residual: remove the applied offset so the pure model error
+  // is always recoverable, whether or not the offset was on for this drop.
+  const oD = rec.offset_applied ? rec.offset_down_m : 0;
+  const oC = rec.offset_applied ? rec.offset_cross_m : 0;
+  const raw_down = miss_downwind - oD, raw_cross = miss_cross - oC;
+
+  Object.assign(rec, {
+    t_impact: new Date().toISOString(),
+    impact_px_x: Math.round(ix), impact_px_y: Math.round(iy),
+    // residual AFTER the offset (impact vs target) — how well the corrected aim did
+    miss_m: round2(miss_m),
+    miss_bearing_deg: Math.round(miss_bearing),
+    miss_downwind_m: round2(miss_downwind),
+    miss_cross_m: round2(miss_cross),
+    // residual WITHOUT the offset — the pure model error (use this to calibrate)
+    raw_miss_m: round2(Math.hypot(raw_down, raw_cross)),
+    raw_miss_downwind_m: round2(raw_down),
+    raw_miss_cross_m: round2(raw_cross),
+    // real drift the round experienced vs predicted (from the raw model error)
+    actual_drift_m: round2(rec.pred_drift_m + raw_down),
+    drift_scale_needed: rec.pred_drift_m>0.2 ? round2((rec.pred_drift_m+raw_down)/rec.pred_drift_m) : '',
+    verdict,
+  });
+  delete rec._pxPerM; delete rec._hdg; delete rec._wDir;
+
+  dropLog.push(rec);
+  E('logCount').textContent = dropLog.length;
+  const rawLine = rec.offset_applied
+    ? `<br>raw (no offset): <b>${rec.raw_miss_m} m</b>  dw ${rec.raw_miss_downwind_m>=0?'+':''}${rec.raw_miss_downwind_m} · cr ${rec.raw_miss_cross_m}`
+    : '';
+  logStatus(`Drop #${rec.id}: miss <b>${rec.miss_m} m</b> @ ${rec.miss_bearing_deg}°T${rec.offset_applied?' (offset on)':''}<br>downwind ${rec.miss_downwind_m>=0?'+':''}${rec.miss_downwind_m} m · cross ${rec.miss_cross_m} m${rawLine}<br><span style="color:var(--gd)">${verdict}</span>`,'ok');
+  showBanner(`LOGGED: ${rec.miss_m} m miss`); hideBanner(2500);
+
+  // persist to the controller (best-effort; local copy is authoritative for export)
+  fetch('/api/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)})
+    .then(r=>r.json()).then(j=>{ if(j&&j.count) E('logCount').textContent=j.count; }).catch(()=>{});
+}
+
+// ── Registration OFFSET controls ──────────────────────────────────
+function refreshOffset(){
+  E('offVal').textContent = biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m';
+  const b=E('offsetBtn');
+  b.textContent='⊕ OFFSET: '+(offsetOn?'ON':'OFF');
+  b.classList.toggle('btn-gn', offsetOn);
+  if(targetMark) computeAim(true);
+  try{ drawOverlay(); }catch(e){}
+}
+E('offsetBtn').addEventListener('click', ()=>{ offsetOn=!offsetOn; refreshOffset(); });
+E('setOffBtn').addEventListener('click', ()=>{
+  if(!dropLog.length){ showBanner('Log a drop first to set an offset'); hideBanner(2200); return; }
+  const last=dropLog[dropLog.length-1];
+  // Registration: shift the aim by the negative of the last measured miss so the
+  // next round centres. Accumulates, so repeated SETs converge.
+  biasDown  = round2(biasDown  - last.miss_downwind_m);
+  biasCross = round2(biasCross - last.miss_cross_m);
+  if(!offsetOn) offsetOn=true;
+  refreshOffset();
+  showBanner(`Offset set from drop #${last.id}: ${biasDown.toFixed(1)} / ${biasCross.toFixed(1)} m`); hideBanner(2600);
+});
+E('offClrBtn').addEventListener('click', ()=>{ biasDown=0; biasCross=0; offsetOn=false; refreshOffset(); });
+
+E('expBtn').addEventListener('click', exportCSV);
+async function exportCSV(){
+  // Prefer the server file (survives reloads, holds every drop); fall back to
+  // the in-memory log if the server has none.
+  try{
+    const r = await fetch('/api/log/export');
+    if(r.ok){ dl(await r.blob(), 'dropaim_log.csv'); return; }
+  }catch(e){}
+  if(!dropLog.length){ showBanner('No drops logged yet'); hideBanner(2000); return; }
+  const cols=[...new Set(dropLog.flatMap(o=>Object.keys(o)))];
+  const esc=v=>v==null?'':/[",\n]/.test(''+v)?'"'+(''+v).replace(/"/g,'""')+'"':''+v;
+  const csv=[cols.join(',')].concat(dropLog.map(o=>cols.map(c=>esc(o[c])).join(','))).join('\n');
+  dl(new Blob([csv],{type:'text/csv'}), 'dropaim_log.csv');
+}
+function dl(blob,name){ const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
+
+E('logClrBtn').addEventListener('click', ()=>{
+  if(!confirm('Clear the on-screen counter? (drops already saved to the controller file are kept)')) return;
+  dropLog=[]; pendingRelease=null; markImpactMode=false;
+  E('logCount').textContent='0'; E('logR').classList.remove('show');
+});
+
+function round1(v){ return v==null?null:Math.round(v*10)/10; }
+function round2(v){ return v==null?null:Math.round(v*100)/100; }
 
 // ══════════════════════════════════════════════════════════════════
 // POSITION LOCK (BRAKE) / UNLOCK (LOITER)
@@ -762,6 +1069,7 @@ function connectTelem(){
   const ws=new WebSocket('ws://localhost:3000/telemetry');
   ws.onopen=()=>console.log('[TELEM] Connected');
   ws.onmessage=e=>{try{
+    if(window.SIM && SIM.on) return;   // simulator drives telemetry in training mode
     const d=JSON.parse(e.data);
     telemetry={...telemetry,...d};
     updateHUD();updateStatus();
@@ -877,5 +1185,8 @@ self.addEventListener('fetch',e=>{
   navigator.serviceWorker.register(URL.createObjectURL(b)).catch(()=>{});
 }
 </script>
+<!-- Training simulator: synthesises the feed + telemetry. Loaded after the app
+     so it can drive the same tracker/physics/overlay code path. -->
+<script src="/sim.js"></script>
 </body>
 </html>
