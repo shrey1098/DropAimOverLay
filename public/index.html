@@ -205,6 +205,36 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     </div>
     <div style="font-size:9px;color:var(--mt);text-align:center">LOGGED <span id="logCount" style="color:var(--gn)">0</span> drops this session</div>
   </div></div>
+
+  <div class="sec"><div class="sh">🎓 TRAINING SIMULATOR</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Synthetic feed + telemetry. Marking, aim, LOCK, offset and logging behave exactly as live.</div>
+    <button class="btn btn-gd" id="simBtn">▶ START SIMULATOR</button>
+    <div id="simRows" style="display:none;flex-direction:column;gap:7px">
+      <div class="f"><label>Scene</label><select id="simScene">
+        <option value="dummy" selected>Dummy range — painted target</option>
+        <option value="sat">Satellite image (load below)</option>
+      </select></div>
+      <div id="simSatRow" style="display:none;flex-direction:column;gap:5px">
+        <input type="file" id="simFile" accept="image/*" style="font-size:9px">
+        <div class="f"><label>Image ground width <span id="simGwL">80 m</span></label><input type="range" id="simGw" min="20" max="500" value="80" step="5"></div>
+      </div>
+      <div class="f"><label>Sim altitude <span id="simAltL">150 m</span></label><input type="range" id="simAlt" min="50" max="400" value="150" step="5"></div>
+      <div class="f"><label>Sim wind <span id="simWsL">4.0 m/s</span></label><input type="range" id="simWs" min="0" max="12" value="4" step="0.5"></div>
+      <div class="f"><label>Sim wind dir FROM <span id="simWdL">200°</span></label><input type="range" id="simWd" min="0" max="359" value="200" step="1"></div>
+      <div class="f"><label>Shake <span id="simShL">50%</span></label><input type="range" id="simSh" min="0" max="100" value="50" step="5"></div>
+      <div style="font-size:9px;color:var(--mt);text-align:center">FLY: arrow keys / drag below</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+        <div></div><button class="btn" id="simUp" style="padding:6px">▲</button><div></div>
+        <button class="btn" id="simLeft" style="padding:6px">◀</button>
+        <button class="btn" id="simCtr" style="padding:6px" title="jump onto the aim point">◎</button>
+        <button class="btn" id="simRight" style="padding:6px">▶</button>
+        <div></div><button class="btn" id="simDown" style="padding:6px">▼</button><div></div>
+      </div>
+      <button class="btn btn-rd" id="simDrop">💣 SIMULATE DROP</button>
+      <div class="aimr" id="simR"></div>
+      <button class="btn" id="simReset">↺ NEW TARGET / RESET</button>
+    </div>
+  </div></div>
 </div>
 </div>
 
@@ -304,13 +334,20 @@ async function startStream() {
 }
 
 async function renderFrame(jpg) {
+  // Training simulator owns the feed while it is running.
+  if(window.SIM && SIM.on) return;
   try {
     const bmp = await createImageBitmap(new Blob([jpg],{type:'image/jpeg'}));
     VC.width=bmp.width; VC.height=bmp.height;
     vx.drawImage(bmp,0,0);
     bmp.close();
   } catch(e) { return; } // corrupt frame — skip it
+  processFrame();
+}
 
+// Everything after the frame is in VC: paint, track, overlay. Shared by the
+// live feed and the simulator so both exercise the identical code path.
+function processFrame() {
   // Draw video FIRST — a tracker/physics error must never freeze the feed
   ctx.drawImage(VC,0,0,MC.width,MC.height);
 
@@ -1032,6 +1069,7 @@ function connectTelem(){
   const ws=new WebSocket('ws://localhost:3000/telemetry');
   ws.onopen=()=>console.log('[TELEM] Connected');
   ws.onmessage=e=>{try{
+    if(window.SIM && SIM.on) return;   // simulator drives telemetry in training mode
     const d=JSON.parse(e.data);
     telemetry={...telemetry,...d};
     updateHUD();updateStatus();
@@ -1147,5 +1185,8 @@ self.addEventListener('fetch',e=>{
   navigator.serviceWorker.register(URL.createObjectURL(b)).catch(()=>{});
 }
 </script>
+<!-- Training simulator: synthesises the feed + telemetry. Loaded after the app
+     so it can drive the same tracker/physics/overlay code path. -->
+<script src="/sim.js"></script>
 </body>
 </html>

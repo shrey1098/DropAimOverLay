@@ -40,7 +40,7 @@ android {
 tasks.register('syncWebAssets', Copy) {
     from "${rootProject.projectDir}/../public"
     into "${projectDir}/src/main/assets/www"
-    include 'index.html', 'manifest.json', 'icon.svg'
+    include 'index.html', 'sim.js', 'manifest.json', 'icon.svg'
 }
 tasks.named('preBuild') { dependsOn 'syncWebAssets' }
 

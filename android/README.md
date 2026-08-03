@@ -12,6 +12,10 @@ with a tiny embedded server replicating what `server.js` used to do, natively:
 | Telemetry to UI | ws | NanoHTTPD WebSocket `/telemetry` |
 | Drop log | `drops.jsonl` | app-private `drops.jsonl` |
 
+The **training simulator** (`sim.js`) is bundled too: it synthesises the feed and
+telemetry so operators can practise the full engagement with no aircraft. It is
+switched on from the TRAINING SIMULATOR panel in the sidebar.
+
 The web app is loaded from `http://127.0.0.1:3000/`, so **the tracker, physics,
 offset and logging all work unchanged** — the WebView receives real JPEG frames
 it can read pixels from.
