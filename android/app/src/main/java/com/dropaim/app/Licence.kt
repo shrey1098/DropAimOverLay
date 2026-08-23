@@ -29,7 +29,7 @@ object Licence {
 
     // Replace with the output of `node dropaim-licence.js init`.
     // The build refuses to arm until this is a real key (see isConfigured()).
-    private const val PUBLIC_KEY_B64 = "REPLACE_WITH_YOUR_PUBLIC_KEY"
+    private const val PUBLIC_KEY_B64 ="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENT/jxQfXHDg4txb7DYPfkoVaavq9t1u7xWNWvz9vSdA9F2eZ8T9N8nyvuh3bYtHNzaTH8LUCRw1mGTJXyKu/eQ=="
 
     private const val LIC_FILE = "licence.dat"
     private const val PREFIX = "DROPAIM-V1:"
