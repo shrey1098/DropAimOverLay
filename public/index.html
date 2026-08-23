@@ -222,7 +222,13 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <div class="f"><label>Sim wind <span id="simWsL">4.0 m/s</span></label><input type="range" id="simWs" min="0" max="12" value="4" step="0.5"></div>
       <div class="f"><label>Sim wind dir FROM <span id="simWdL">200°</span></label><input type="range" id="simWd" min="0" max="359" value="200" step="1"></div>
       <div class="f"><label>Shake <span id="simShL">50%</span></label><input type="range" id="simSh" min="0" max="100" value="50" step="5"></div>
-      <div style="font-size:9px;color:var(--mt);text-align:center">FLY: arrow keys / drag below</div>
+      <div style="font-size:9px;color:var(--mt);text-align:center">FLY: GCS sticks · arrow keys · pad below</div>
+      <div class="f"><label>Stick mapping</label><select id="simMap">
+        <option value="rzz" selected>Right stick = Z / RZ (most controllers)</option>
+        <option value="xy">Right stick = X / Y</option>
+        <option value="rxry">Right stick = RX / RY</option>
+      </select></div>
+      <div id="simStick" style="font-size:9px;color:var(--mt);line-height:1.5;background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:5px 7px">move a stick to test…</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
         <div></div><button class="btn" id="simUp" style="padding:6px">▲</button><div></div>
         <button class="btn" id="simLeft" style="padding:6px">◀</button>

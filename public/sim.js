@@ -35,11 +35,28 @@ const S = window.SIM = {
   t: 0,
   raf: null,
   keys: {},
+  stick: { x:0, y:0, z:0, rz:0, rx:0, ry:0, hatx:0, haty:0 },
+  stickSeen: false,        // has any axis ever moved? proves sticks reach Android
+  map: 'rzz',              // which axes fly the aircraft — see applyStick()
   lastDrop: null,
   fall: null,            // in-flight round being animated
 };
 
 const D2R = Math.PI / 180;
+
+// ── called from MainActivity (native) ─────────────────────────────
+// Physical GCS sticks arrive here as raw axis values in -1..1.
+window.__stick = function (a) {
+  Object.assign(S.stick, a);
+  for (const k in a) if (Math.abs(a[k]) > 0.12) S.stickSeen = true;
+  if (S.on) showStickReadout();
+};
+window.__pad = function (btn) {
+  if (!S.on) return;
+  if (btn === 'up') nudge(1, 0); else if (btn === 'down') nudge(-1, 0);
+  else if (btn === 'left') nudge(0, -1); else if (btn === 'right') nudge(0, 1);
+  else if (btn === 'a') simulateDrop();
+};
 const E = id => document.getElementById(id);
 
 // ── terrain generation ────────────────────────────────────────────
@@ -215,6 +232,7 @@ function pushTelemetry() {
 function tick() {
   if (!S.on) return;
   flyFromKeys();
+  applyStick();
   renderScene();
   // The round is drawn into the frame BEFORE the tracker runs, so it appears in
   // the feed just as it would through the real camera.
@@ -225,6 +243,48 @@ function tick() {
 }
 
 // ── flying ────────────────────────────────────────────────────────
+// Continuous stick flying. Right stick moves the aircraft over the ground
+// (which is what walks the blue camera-centre onto the green aim point), left
+// stick yaws and changes height.
+function applyStick() {
+  const st = S.stick;
+  let fwd = 0, right = 0, yaw = 0, climb = 0;
+  if (S.map === 'rzz') {            // common: right stick = Z (x) / RZ (y)
+    right = st.z;  fwd = -st.rz;  yaw = st.x;  climb = -st.y;
+  } else if (S.map === 'xy') {      // right stick reported as X/Y
+    right = st.x;  fwd = -st.y;   yaw = st.z;  climb = -st.rz;
+  } else if (S.map === 'rxry') {    // right stick reported as RX/RY
+    right = st.rx; fwd = -st.ry;  yaw = st.x;  climb = -st.y;
+  }
+  // hat/dpad always helps
+  right += st.hatx; fwd += -st.haty;
+
+  const RATE = 2.2;                 // metres/second at full deflection
+  const dt = 1 / 15;
+  if (fwd || right) {
+    const h = S.drone.hdg * D2R;
+    S.drone.n += (fwd * Math.cos(h) + right * Math.cos(h + Math.PI / 2)) * RATE * dt;
+    S.drone.e += (fwd * Math.sin(h) + right * Math.sin(h + Math.PI / 2)) * RATE * dt;
+  }
+  if (yaw)   S.drone.hdg = (S.drone.hdg + yaw * 45 * dt + 360) % 360;
+  if (climb) {
+    S.drone.alt = Math.max(50, Math.min(400, S.drone.alt + climb * 12 * dt));
+    const el = E('simAlt'); if (el) { el.value = S.drone.alt; E('simAltL').textContent = S.drone.alt.toFixed(0) + ' m'; }
+  }
+}
+
+function showStickReadout() {
+  const el = E('simStick'); if (!el) return;
+  const st = S.stick;
+  const f = v => (v >= 0 ? '+' : '') + v.toFixed(2);
+  el.innerHTML = S.stickSeen
+    ? `<b style="color:var(--gn)">STICKS DETECTED</b><br>` +
+      `x ${f(st.x)}  y ${f(st.y)}<br>z ${f(st.z)}  rz ${f(st.rz)}<br>` +
+      `rx ${f(st.rx)}  ry ${f(st.ry)}  hat ${f(st.hatx)}/${f(st.haty)}`
+    : `<b style="color:var(--gd)">no stick input seen yet</b><br>` +
+      `move a stick — if nothing changes, this GCS does not expose its sticks to Android`;
+}
+
 function flyFromKeys() {
   const step = 0.35;                              // metres per frame
   const h = S.drone.hdg * D2R;
@@ -451,6 +511,7 @@ function start() {
   E('simBtn').textContent = '■ STOP SIMULATOR';
   E('simBtn').classList.add('btn-rd');
   document.getElementById('nosig').classList.add('hide');
+  showStickReadout();
   status('Simulator running. Tap the target to mark it, CALCULATE AIM, fly 🔵 onto 🟢, then SIMULATE DROP.', 'ok');
   tick();
 }
@@ -489,6 +550,8 @@ function bindUI() {
     if (S.scene === 'sat' && S.ground) S.mpp = parseFloat(V('simGw')) / S.ground.width;
   });
 
+  const mapSel = E('simMap');
+  if (mapSel) mapSel.addEventListener('change', () => { S.map = V('simMap'); });
   E('simUp').addEventListener('click', () => nudge(1, 0));
   E('simDown').addEventListener('click', () => nudge(-1, 0));
   E('simLeft').addEventListener('click', () => nudge(0, -1));
