@@ -148,7 +148,15 @@ class WebServer(
             val bytes = ctx.assets.open("www/$clean").readBytes()
             newFixedLengthResponse(Response.Status.OK, mimeOf(clean), ByteArrayInputStream(bytes), bytes.size.toLong())
         } catch (_: Exception) {
-            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found: $clean")
+            // Say WHY, not just "not found" — a missing web asset means the APK
+            // was built without the syncWebAssets copy having run.
+            val have = try { ctx.assets.list("www")?.joinToString(", ") ?: "" } catch (e: Exception) { "?" }
+            val msg = if (have.isBlank())
+                "assets/www is EMPTY — the web app was not packaged into this APK.\n" +
+                "Run './gradlew syncWebAssets' and rebuild."
+            else "not found: $clean (assets/www contains: $have)"
+            Log.e(TAG, msg)
+            newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", msg)
         }
     }
 

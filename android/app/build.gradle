@@ -41,8 +41,33 @@ tasks.register('syncWebAssets', Copy) {
     from "${rootProject.projectDir}/../public"
     into "${projectDir}/src/main/assets/www"
     include 'index.html', 'sim.js', 'manifest.json', 'icon.svg'
+
 }
-tasks.named('preBuild') { dependsOn 'syncWebAssets' }
+
+// A Copy task whose source is missing is skipped as NO-SOURCE — and a doLast
+// inside it never runs. So the check has to live in a task that always executes,
+// otherwise a broken build silently ships an APK with no web app and only shows
+// up as a 404 on the device.
+tasks.register('verifyWebAssets') {
+    dependsOn 'syncWebAssets'
+    doLast {
+        def idx = file("${projectDir}/src/main/assets/www/index.html")
+        if (!idx.exists()) {
+            throw new GradleException(
+                "The web app is missing from assets/www.\n" +
+                "Expected source: ${rootProject.projectDir}/../public/index.html\n" +
+                "The android/ project must sit inside the full repo clone.")
+        }
+        logger.lifecycle("verifyWebAssets: web app packaged (${idx.length()} bytes)")
+    }
+}
+
+// preBuild alone is not enough — the tasks that actually PACKAGE assets are the
+// merge*Assets ones, and they can run without waiting for the copy.
+tasks.named('preBuild') { dependsOn 'verifyWebAssets' }
+tasks.configureEach { t ->
+    if (t.name ==~ /merge.*Assets/) t.dependsOn('verifyWebAssets')
+}
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.13.1'
