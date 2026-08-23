@@ -15,6 +15,23 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.DropAim">
 
+        <!-- Lock screen: shown until the device is activated. -->
+        <activity
+            android:name=".ActivationActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- USB-only metrics export (adb broadcast; not exposed in the UI). -->
+        <receiver
+            android:name=".ExportReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="com.dropaim.app.EXPORT" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

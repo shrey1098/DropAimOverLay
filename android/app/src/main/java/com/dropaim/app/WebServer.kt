@@ -109,6 +109,14 @@ class WebServer(
         val rec = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
         rec.put("server_ts", java.time.Instant.now().toString())
         logFile.appendText(rec.toString() + "\n")
+        // Mirror the essentials into the usage logbook that gets uploaded.
+        Metrics.log(ctx, "drop", mapOf(
+            "alt_agl_m" to rec.opt("alt_agl_m"),
+            "wind_ms" to rec.opt("wind_ms"),
+            "miss_m" to rec.opt("miss_m"),
+            "raw_miss_downwind_m" to rec.opt("raw_miss_downwind_m"),
+            "offset_applied" to rec.opt("offset_applied")
+        ))
         return json("""{"ok":true,"count":${readLog().size}}""")
     }
 

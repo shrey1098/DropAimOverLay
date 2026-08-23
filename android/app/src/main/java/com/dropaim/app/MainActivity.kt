@@ -1,6 +1,7 @@
 package com.dropaim.app
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.TextureView
@@ -25,11 +26,26 @@ class MainActivity : AppCompatActivity() {
     private val mav = MavlinkService()
     private lateinit var video: VideoPipe
     private var server: WebServer? = null
+    private var sessionStart = 0L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // GATE: nothing starts on an unactivated device — no feed, no telemetry,
+        // no targeting. Re-checked every launch against this device's fingerprint,
+        // so a copied licence file does not travel to another GCS.
+        if (!Licence.isActivated(this)) {
+            startActivity(Intent(this, ActivationActivity::class.java))
+            finish()
+            return
+        }
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        Metrics.log(this, "app_start")
+        sessionStart = System.currentTimeMillis()
+        UploadWorker.schedule(applicationContext)
 
         video = VideoPipe(applicationContext)
 
@@ -73,10 +89,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        try { server?.stop() } catch (_: Exception) {}
-        video.stop()
-        mav.stop()
-        webView.destroy()
+        // Guarded: when the licence gate sends us straight to ActivationActivity
+        // none of these were ever created.
+        if (sessionStart > 0L) {
+            Metrics.log(this, "session_end",
+                mapOf("minutes" to (System.currentTimeMillis() - sessionStart) / 60000))
+            try { server?.stop() } catch (_: Exception) {}
+            try { video.stop() } catch (_: Exception) {}
+            try { mav.stop() } catch (_: Exception) {}
+            try { webView.destroy() } catch (_: Exception) {}
+        }
         super.onDestroy()
     }
 

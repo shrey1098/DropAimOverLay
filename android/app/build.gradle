@@ -58,4 +58,7 @@ dependencies {
     // pixels. (Replaces FFmpegKit, whose artifacts were withdrawn upstream.)
     implementation 'androidx.media3:media3-exoplayer:1.4.1'
     implementation 'androidx.media3:media3-exoplayer-rtsp:1.4.1'
+
+    // Background metrics upload that survives the app being closed / rebooted
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'
 }

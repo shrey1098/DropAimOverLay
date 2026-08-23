@@ -14,4 +14,15 @@ object Config {
     const val VIDEO_H       = 480
     const val VIDEO_FPS     = 15
     const val VIDEO_Q       = 5                            // mjpeg quality (1 best .. 31 worst)
+
+    // ── Usage metrics ────────────────────────────────────────────────
+    // Where the background uploader posts to. Leave as-is to disable uploading
+    // entirely (records still accumulate locally and can be pulled over USB).
+    // Must be https:// for anything leaving a controlled network.
+    const val METRICS_URL   = "REPLACE_WITH_YOUR_HTTPS_ENDPOINT"
+    fun metricsUrlConfigured(): Boolean =
+        METRICS_URL.startsWith("https://") || METRICS_URL.startsWith("http://")
+
+    // Second gate on the USB export broadcast. Change this per build.
+    const val EXPORT_TOKEN  = "CHANGE-ME-EXPORT-TOKEN"
 }
