@@ -30,6 +30,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var video: VideoPipe
     private var server: WebServer? = null
     private var sessionStart = 0L
+    private var boundPort = Config.HTTP_PORT
+    private var uiRetries = 0
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,19 +57,39 @@ class MainActivity : AppCompatActivity() {
 
         // Bring up the native services first, then the embedded server.
         mav.start()
-        try {
-            server = WebServer(applicationContext, mav).also { it.start(SOCKET_TIMEOUT, false) }
-            Log.i(TAG, "embedded server on :${Config.HTTP_PORT}")
-        } catch (e: Exception) {
-            Log.e(TAG, "server failed: ${e.message}")
+        // Port 3000 can already be taken once the aircraft stack is running on
+        // the GCS. Fall back rather than leaving the operator with a dead screen.
+        for (p in Config.HTTP_PORT until Config.HTTP_PORT + 6) {
+            try {
+                server = WebServer(applicationContext, mav, p).also { it.start(SOCKET_TIMEOUT, false) }
+                boundPort = p
+                Log.i(TAG, "embedded server listening on :$p")
+                break
+            } catch (e: Exception) {
+                Log.w(TAG, "port $p unavailable (${e.message})")
+                server = null
+            }
         }
+        if (server == null) Log.e(TAG, "no port available — UI cannot be served")
 
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onReceivedError(
+                    view: WebView?, req: android.webkit.WebResourceRequest?,
+                    err: android.webkit.WebResourceError?
+                ) {
+                    // A single failed load used to leave a permanent error page.
+                    val u = req?.url?.toString() ?: ""
+                    if (req?.isForMainFrame == true) {
+                        Log.w(TAG, "UI load failed ($u) — retrying")
+                        retryLoad()
+                    }
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                     Log.d("WebApp", "${m.message()} @${m.sourceId()}:${m.lineNumber()}")
@@ -88,8 +110,60 @@ class MainActivity : AppCompatActivity() {
 
         // Start video once the surface is live, then load the UI.
         video.start(videoSurface)
-        // Small delay lets the server bind before the first request.
-        webView.postDelayed({ webView.loadUrl("http://127.0.0.1:${Config.HTTP_PORT}/") }, 400)
+        loadUiWhenServerReady()
+    }
+
+    // ── bringing up the UI reliably ────────────────────────────────────
+    // The old code fired one loadUrl after a fixed 400 ms. With the aircraft
+    // connected there is more to do at startup (live MAVLink traffic, RTSP
+    // actually reachable), so the server was sometimes not listening yet and the
+    // WebView was left on a permanent error page. Wait for a real connection
+    // instead of guessing, and keep retrying.
+    private fun loadUiWhenServerReady() {
+        if (server == null) { showStartupError("No free port for the local UI server."); return }
+        Thread {
+            val port = boundPort
+            val deadline = System.currentTimeMillis() + 20_000
+            var up = false
+            while (System.currentTimeMillis() < deadline && !up) {
+                up = try {
+                    java.net.Socket().use {
+                        it.connect(java.net.InetSocketAddress("127.0.0.1", port), 400); true
+                    }
+                } catch (e: Exception) { Thread.sleep(150); false }
+            }
+            runOnUiThread {
+                if (up) {
+                    Log.i(TAG, "server reachable — loading UI")
+                    webView.loadUrl("http://127.0.0.1:$port/")
+                } else {
+                    showStartupError("Local UI server did not start on port $port.")
+                }
+            }
+        }.start()
+    }
+
+    private fun retryLoad() {
+        if (uiRetries >= MAX_RETRIES) {
+            showStartupError("Could not load the interface after $MAX_RETRIES attempts.")
+            return
+        }
+        uiRetries++
+        webView.postDelayed({ webView.loadUrl("http://127.0.0.1:$boundPort/") }, 700L * uiRetries)
+    }
+
+    /** Never leave the operator staring at a blank screen — say what failed. */
+    private fun showStartupError(reason: String) {
+        val html = """
+            <html><body style="background:#080c10;color:#b8cfe0;font-family:monospace;padding:24px">
+            <h2 style="color:#ff3b55">INTERFACE FAILED TO START</h2>
+            <p>$reason</p>
+            <p style="color:#7fa0b8">Close the application fully and reopen it. If it persists,
+            restart the ground station — another application may be holding the port.</p>
+            <p style="color:#3d607a">port $boundPort &middot; server ${if (server == null) "not started" else "started"}</p>
+            </body></html>""".trimIndent()
+        webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+        Log.e(TAG, "startup error: $reason")
     }
 
     // ── GCS stick input ───────────────────────────────────────────────
@@ -178,6 +252,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val SOCKET_TIMEOUT = 10000
+        private const val MAX_RETRIES = 5
         private const val DEADZONE = 0.08f
 
         // Forwarded to JS by name. Which of these a given controller populates

@@ -31,7 +31,7 @@ class WebServer(
     private val ctx: Context,
     private val mav: MavlinkService,
     port: Int = Config.HTTP_PORT
-) : NanoWSD(port) {
+) : NanoWSD("127.0.0.1", port) {
 
     private val logFile = File(ctx.filesDir, "drops.jsonl")
 

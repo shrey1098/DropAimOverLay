@@ -36,7 +36,14 @@ class MavlinkService {
         running = true
         thread(name = "mavlink") {
             try {
-                val s = DatagramSocket(Config.MAVLINK_PORT)
+                // SO_REUSEADDR before bind: when the GCS is connected to the
+                // aircraft its own flight app is usually already bound to the
+                // standard MAVLink port. Without this the bind throws and we get
+                // no telemetry at all for the rest of the session.
+                val s = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(java.net.InetSocketAddress(Config.MAVLINK_PORT))
+                }
                 socket = s
                 Log.i(TAG, "listening UDP :${Config.MAVLINK_PORT}")
                 val buf = ByteArray(2048)
@@ -57,6 +64,9 @@ class MavlinkService {
                     s.send(DatagramPacket(data, data.size, qgcAddr, Config.QGC_PORT))
                     parse(data)
                 }
+            } catch (e: java.net.BindException) {
+                Log.e(TAG, "UDP :${Config.MAVLINK_PORT} is already held by another app " +
+                           "and would not share it — no telemetry this session (${e.message})")
             } catch (e: Exception) {
                 if (running) Log.e(TAG, "mavlink error: ${e.message}")
             }
