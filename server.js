@@ -24,7 +24,16 @@ const path      = require('path');
 // ── CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
   port:        3000,
-  rtspUrl:     'rtsp://192.168.144.108:554/main',   // local mediamtx
+  // Candidate video sources, tried in order until one delivers frames — a
+  // dual-sensor gimbal publishes thermal and daylight on separate URLs, and
+  // sometimes separate ports. Each is tried over TCP then UDP.
+  // Add credentials inline if the camera demands them:
+  //   'rtsp://admin:pass@192.168.144.108:554/stream=1'
+  rtspUrls: [
+    'rtsp://192.168.144.108:554/stream=1',   // thermal
+    'rtsp://192.168.144.108:555/stream=2',   // second sensor
+    'rtsp://192.168.144.108:554/main',       // legacy single-sensor path
+  ],
   mavlinkPort: 14551,
   qgcPort:     14550,                            // QGC forwards here
   targetSys:   1,    // flight controller system id
@@ -45,7 +54,13 @@ let currentFrame  = null;
 // frames when the camera stalls.
 const frameBus    = new EventEmitter();
 frameBus.setMaxListeners(0);
-const videoState  = { connected: false, ffmpeg: null };
+const videoState  = { connected: false, ffmpeg: null, activeUrl: '', lastError: '', attempt: 0 };
+// Every URL over TCP first, then every URL over UDP. TCP traverses the datalink
+// more reliably, but some cameras only implement UDP — pinning the transport on
+// its own was enough to make a working camera look dead.
+const VIDEO_ATTEMPTS = []
+  .concat(CONFIG.rtspUrls.map(u => ({ url: u, transport: 'tcp' })))
+  .concat(CONFIG.rtspUrls.map(u => ({ url: u, transport: 'udp' })));
 const mavState    = {
   connected: false,
   latest: {
@@ -106,7 +121,12 @@ app.get('/stream', (req, res) => {
 });
 
 app.get('/api/status', (req, res) => {
-  res.json({ video: videoState.connected, mavlink: mavState.connected });
+  res.json({
+    video: videoState.connected,
+    mavlink: mavState.connected,
+    videoUrl: videoState.activeUrl || '',
+    videoErr: videoState.lastError || '',
+  });
 });
 
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.
@@ -150,7 +170,10 @@ const EOI = Buffer.from([0xFF, 0xD9]);   // JPEG end-of-image
 
 function startVideo() {
   if(videoState.ffmpeg) return;
-  console.log('[VIDEO] Starting ffmpeg...');
+  const a = VIDEO_ATTEMPTS[videoState.attempt % VIDEO_ATTEMPTS.length];
+  const label = `${a.url} [${a.transport.toUpperCase()}]`;
+  videoState.activeUrl = label;
+  console.log(`[VIDEO] Trying ${label} (candidate ${videoState.attempt % VIDEO_ATTEMPTS.length + 1}/${VIDEO_ATTEMPTS.length})`);
 
   const ff = spawn('ffmpeg', [
     '-loglevel', 'error',
@@ -161,8 +184,8 @@ function startVideo() {
     '-flags', 'low_delay',
     '-probesize', '32',
     '-analyzeduration', '0',
-    '-rtsp_transport', 'tcp',
-    '-i', CONFIG.rtspUrl,
+    '-rtsp_transport', a.transport,
+    '-i', a.url,
     '-an',                      // no audio path at all
     '-f', 'image2pipe',
     '-vf', `fps=${CONFIG.videoFps},scale=${CONFIG.videoWidth}:${CONFIG.videoHeight}`,
@@ -175,6 +198,7 @@ function startVideo() {
   let buf = Buffer.alloc(0);
 
   ff.stdout.on('data', chunk => {
+    if(!videoState.connected){ console.log(`[VIDEO] PLAYING ${label}`); videoState.lastError=''; }
     videoState.connected = true;
     buf = Buffer.concat([buf, chunk]);
     // Drain EVERY complete JPEG in the buffer and keep only the newest. The
@@ -198,8 +222,19 @@ function startVideo() {
     if(buf.length>5e6) buf=Buffer.alloc(0);
   });
 
-  ff.stderr.on('data', d => { const m=d.toString().trim(); if(m) console.log('[ffmpeg]',m); });
-  ff.on('close', c => { console.log(`[VIDEO] ffmpeg exited (${c}). Retry 3s...`); videoState.connected=false; videoState.ffmpeg=null; setTimeout(startVideo,3000); });
+  ff.stderr.on('data', d => {
+    const m=d.toString().trim();
+    if(m){ console.log('[ffmpeg]',m); videoState.lastError = `${label} — ${m.split('\n').pop()}`; }
+  });
+  ff.on('close', c => {
+    // Only advance to the next candidate if this one never produced a frame.
+    // A stream that was working and then dropped should be retried as-is.
+    const played = videoState.connected;
+    console.log(`[VIDEO] ${label} exited (${c}).${played ? '' : ' Trying next candidate.'} Retry 3s...`);
+    if(!played) videoState.attempt++;
+    videoState.connected=false; videoState.ffmpeg=null;
+    setTimeout(startVideo,3000);
+  });
   ff.on('error', e => console.error(e.code==='ENOENT'?'[ERR] ffmpeg not found':'[ERR] '+e.message));
 }
 

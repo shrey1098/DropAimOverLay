@@ -55,7 +55,13 @@ class WebServer(
         return try {
             when {
                 uri == "/stream" -> streamResponse()
-                uri == "/api/status" -> json("""{"video":${FrameBus.connected},"mavlink":${Telemetry.mavlinkOk}}""")
+                uri == "/api/status" -> json(
+                    JSONObject()
+                        .put("video", FrameBus.connected)
+                        .put("mavlink", Telemetry.mavlinkOk)
+                        .put("videoUrl", FrameBus.activeUrl)
+                        .put("videoErr", FrameBus.lastError)
+                        .toString())
                 uri == "/api/mode" && session.method == Method.POST -> apiMode(session)
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }

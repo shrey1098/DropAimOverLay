@@ -30,6 +30,7 @@ canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:cr
    it the "NO VIDEO" panel swallows every tap and the target cannot be marked. */
 .nosig{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px;pointer-events:none}
 .nosig .icon{font-size:40px;opacity:.3}
+#nosigWhy{max-width:70%;text-align:center;word-break:break-all;line-height:1.5}
 .nosig.hide{display:none}
 
 /* HUD */
@@ -94,7 +95,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 <!-- ══ VIDEO PANE ══ -->
 <div class="vpane">
   <canvas id="main"></canvas>
-  <div class="nosig" id="nosig"><div class="icon">📡</div><div>NO VIDEO</div><div style="font-size:9px;color:var(--mt)">Waiting for C20 stream...</div></div>
+  <div class="nosig" id="nosig"><div class="icon">📡</div><div>NO VIDEO</div><div style="font-size:9px;color:var(--mt)" id="nosigWhy">Waiting for camera stream...</div></div>
 
   <div class="hud tl" id="hudTL">
     <div><span class="lbl">ROLL</span> <span class="val" id="hRoll">—</span> <span class="lbl">PITCH</span> <span class="val" id="hPitch">—</span></div>
@@ -1004,6 +1005,22 @@ function updateStatus(){
   v.textContent=telemetry.videoOk?'VIDEO ✓':'VIDEO ✕';v.className='pill '+(telemetry.videoOk?'ok':'bad');
   m.textContent=telemetry.mavlinkOk?'MAVLINK ✓':'MAVLINK ✕';m.className='pill '+(telemetry.mavlinkOk?'ok':'bad');
 }
+
+// While there is no picture, say WHICH source was tried and what it reported.
+// On the aircraft the operator has no logcat, so a silent black screen is
+// indistinguishable from a wrong URL, a wrong transport or a dead camera.
+setInterval(async ()=>{
+  const n=E('nosig');
+  if(!n || n.classList.contains('hide')) return;
+  if(window.SIM && SIM.on) return;
+  try{
+    const s=await fetch('/api/status').then(r=>r.json());
+    E('nosigWhy').textContent =
+      s.videoErr ? s.videoErr :
+      s.videoUrl ? 'Trying '+s.videoUrl+' …' :
+      'Waiting for camera stream...';
+  }catch(e){ E('nosigWhy').textContent='Local server not reachable.'; }
+}, 2000);
 
 function updateResult(){
   if(!result) return;

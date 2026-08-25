@@ -19,6 +19,11 @@ import java.io.ByteArrayOutputStream
 object FrameBus {
     @Volatile var latest: ByteArray? = null
     @Volatile var connected = false
+    /** The URL and transport currently playing, or the one being tried. */
+    @Volatile var activeUrl = ""
+    /** Why the last attempt failed — surfaced in the NO VIDEO panel, because
+     *  the operator in the field has no logcat. */
+    @Volatile var lastError = ""
 }
 
 /**
@@ -39,6 +44,26 @@ class VideoPipe(private val ctx: Context) {
     private var textureView: TextureView? = null
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var running = false
+    @Volatile private var playing = false
+    /** Did the CURRENT candidate ever deliver? A source that worked and then
+     *  dropped should be retried as-is, not abandoned for the next guess. */
+    @Volatile private var everPlayed = false
+    private var attemptIdx = 0
+
+    /** One thing to try: a URL over a specific RTP transport. */
+    private data class Attempt(val url: String, val tcp: Boolean) {
+        override fun toString() = "$url [${if (tcp) "TCP" else "UDP"}]"
+    }
+
+    /**
+     * Every URL over interleaved TCP first, then every URL over UDP. TCP is
+     * tried first because it traverses the datalink more reliably, but some
+     * cameras only ever implement UDP — pinning the transport was enough on its
+     * own to make a perfectly good camera look dead.
+     */
+    private val attempts: List<Attempt> by lazy {
+        Config.rtspUrls.map { Attempt(it, true) } + Config.rtspUrls.map { Attempt(it, false) }
+    }
 
     /** Must be called on the main thread; [tv] has to be attached to the view tree. */
     fun start(tv: TextureView) {
@@ -50,35 +75,60 @@ class VideoPipe(private val ctx: Context) {
     }
 
     private fun openPlayer() {
+        if (attempts.isEmpty()) { Log.e(TAG, "no RTSP URLs configured"); return }
+        val a = attempts[attemptIdx % attempts.size]
         try {
             player?.release()
+            playing = false
+            everPlayed = false
             val src = RtspMediaSource.Factory()
-                .setForceUseRtpTcp(true)          // matches the old -rtsp_transport tcp
-                .setTimeoutMs(8000)
-                .createMediaSource(MediaItem.fromUri(Config.rtspUrl))
+                .setForceUseRtpTcp(a.tcp)
+                .setTimeoutMs(TIMEOUT_MS)
+                .createMediaSource(MediaItem.fromUri(a.url))
 
             val p = ExoPlayer.Builder(ctx).build().apply {
                 setVideoTextureView(textureView)
                 setMediaSource(src)
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
-                        Log.e(TAG, "player error: ${error.errorCodeName} ${error.message}")
+                        // Name the URL as well as the fault — with a list of
+                        // candidates, "player error" alone says nothing about
+                        // which one failed or why.
+                        val why = "${error.errorCodeName}: ${error.message}"
+                        Log.e(TAG, "FAILED $a — $why")
+                        FrameBus.lastError = "$a — $why"
                         FrameBus.connected = false
-                        // Retry, like the old ffmpeg supervisor did.
-                        if (running) handler.postDelayed({ if (running) openPlayer() }, 3000)
+                        playing = false
+                        // Move on to the next candidate rather than hammering
+                        // the same dead URL forever — unless this one HAD been
+                        // delivering, in which case retry it rather than
+                        // wandering off a source we know is good.
+                        if (!everPlayed) attemptIdx++
+                        if (running) handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
                     }
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        Log.i(TAG, "isPlaying=$isPlaying")
+                        playing = isPlaying
+                        if (isPlaying) {
+                            everPlayed = true
+                            Log.i(TAG, "PLAYING $a")
+                            FrameBus.lastError = ""
+                        } else {
+                            Log.i(TAG, "not playing $a")
+                            FrameBus.connected = false
+                        }
                     }
                 })
                 prepare()
                 playWhenReady = true
             }
             player = p
-            Log.i(TAG, "RTSP opening ${Config.rtspUrl}")
+            FrameBus.activeUrl = a.toString()
+            Log.i(TAG, "RTSP trying $a (candidate ${attemptIdx % attempts.size + 1}/${attempts.size})")
         } catch (e: Exception) {
-            Log.e(TAG, "openPlayer failed: ${e.message}")
-            if (running) handler.postDelayed({ if (running) openPlayer() }, 3000)
+            Log.e(TAG, "openPlayer failed for $a: ${e.message}")
+            FrameBus.lastError = "$a — ${e.message}"
+            attemptIdx++
+            if (running) handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
         }
     }
 
@@ -88,7 +138,12 @@ class VideoPipe(private val ctx: Context) {
             if (!running) return
             try {
                 val tv = textureView
-                if (tv != null && tv.isAvailable) {
+                // Gate on the player actually playing. An attached TextureView
+                // hands back a (blank) bitmap even when nothing is decoding into
+                // it, so grabbing successfully is NOT evidence of a live feed —
+                // publishing on that basis reported a healthy camera when there
+                // was no camera at all.
+                if (playing && tv != null && tv.isAvailable) {
                     // Scale down to the working resolution while grabbing.
                     val bmp: Bitmap? = tv.getBitmap(Config.VIDEO_W, Config.VIDEO_H)
                     if (bmp != null) {
@@ -108,6 +163,7 @@ class VideoPipe(private val ctx: Context) {
 
     fun stop() {
         running = false
+        playing = false
         handler.removeCallbacksAndMessages(null)
         try { player?.release() } catch (_: Exception) {}
         player = null
@@ -117,6 +173,8 @@ class VideoPipe(private val ctx: Context) {
     companion object {
         private const val TAG = "VideoPipe"
         private const val JPEG_QUALITY = 70
+        private const val TIMEOUT_MS = 6000   // per candidate, before moving on
+        private const val RETRY_MS = 1500L    // pause between candidates
         private val GRAB_MS = (1000L / Config.VIDEO_FPS)
     }
 }
