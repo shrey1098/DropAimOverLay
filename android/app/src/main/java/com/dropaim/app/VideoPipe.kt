@@ -72,20 +72,22 @@ class VideoPipe(private val ctx: Context) {
         if (running) return
         running = true
         textureView = tv
-        // One-shot dump of what this device thinks its networks are. The usual
-        // reason a good camera is unreachable is the GCS holding a mobile-data
-        // default route, so packets for 192.168.144.x never touch the datalink.
-        Thread {
-            NetDiag.logNetworks(ctx)
-            NetDiag.hostPort(Config.rtspUrls.firstOrNull() ?: "")?.let {
-                NetDiag.scanPorts(it.first)
-                // Then ask the camera directly, in RTSP, which paths it serves.
-                // ExoPlayer reports every negotiation failure as "Source error";
-                // this logs the camera's actual status line and headers.
-                if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
-                else RtspProbe.check(Config.rtspUrls)
-            }
-        }.start()
+        // Diagnostics must never compete with the player for the camera. This
+        // firmware announces itself as "rtsp_demo" — the vendor sample RTSP
+        // server — and those commonly serve one client at a time, so probing
+        // while ExoPlayer is negotiating can be what breaks the negotiation.
+        // Wait, and only probe if there is still no picture by then.
+        handler.postDelayed({
+            if (!running || FrameBus.connected) return@postDelayed
+            Thread {
+                NetDiag.logNetworks(ctx)
+                NetDiag.hostPort(Config.rtspUrls.firstOrNull() ?: "")?.let {
+                    NetDiag.scanPorts(it.first)
+                    if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
+                    else RtspProbe.check(Config.rtspUrls)
+                }
+            }.start()
+        }, DIAG_DELAY_MS)
         openPlayer()
         handler.postDelayed(grabber, GRAB_MS)
     }
@@ -248,6 +250,7 @@ class VideoPipe(private val ctx: Context) {
         private const val TIMEOUT_MS = 6000   // per candidate, before moving on
         private const val RETRY_MS = 1500L      // pause between candidates
         private const val MAX_RETRY_MS = 30000L // ceiling once sweeps keep failing
+        private const val DIAG_DELAY_MS = 25000L // probe only after the player has had its go
         private val GRAB_MS = (1000L / Config.VIDEO_FPS)
     }
 }

@@ -10,14 +10,15 @@ object Config {
     // works through the list rather than being pinned to one guess.
     // Add credentials inline if the camera demands them:
     //   "rtsp://admin:pass@192.168.144.108:554/stream=1"
-    // Confirmed by RtspProbe against the C13: each port serves exactly one
-    // stream, and DESCRIBE returns 200 + SDP on these two and 454 on everything
-    // else. Both are H.265 (RTP payload 96).
-    //   554 -> stream=1   (555/stream=1 answers 454)
-    //   555 -> stream=2   (554/stream=2 answers 454)
+    // Confirmed against the C13 by raw RTSP: each port serves exactly one
+    // stream, DESCRIBE returns 200 + SDP on these two and 454 on all 38 other
+    // paths tried. Decoded from the SDP's sprop-sps:
+    //   555/stream=2 -> 640x512  H.265 Main L4.0   THERMAL (sensor-native size)
+    //   554/stream=1 -> 1280x720 H.265 Main L4.0   daylight
+    // Thermal first — it is the sensor this application aims with.
     var   rtspUrls          = listOf(
-        "rtsp://192.168.144.108:554/stream=1",
-        "rtsp://192.168.144.108:555/stream=2"
+        "rtsp://192.168.144.108:555/stream=2",
+        "rtsp://192.168.144.108:554/stream=1"
     )
 
     // The camera answered our own raw DESCRIBE with 200 but gave ExoPlayer 406
