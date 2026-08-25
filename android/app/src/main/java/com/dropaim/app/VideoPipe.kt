@@ -49,6 +49,8 @@ class VideoPipe(private val ctx: Context) {
      *  dropped should be retried as-is, not abandoned for the next guess. */
     @Volatile private var everPlayed = false
     private var attemptIdx = 0
+    /** Completed full sweeps of every candidate, used to back off retries. */
+    private var sweeps = 0
 
     /** One thing to try: a URL over a specific RTP transport. */
     private data class Attempt(val url: String, val tcp: Boolean) {
@@ -75,10 +77,12 @@ class VideoPipe(private val ctx: Context) {
         // default route, so packets for 192.168.144.x never touch the datalink.
         Thread {
             NetDiag.logNetworks(ctx)
-            // Then find out which ports the camera actually answers on, so the
-            // URL list can be corrected from evidence instead of guesswork.
             NetDiag.hostPort(Config.rtspUrls.firstOrNull() ?: "")?.let {
                 NetDiag.scanPorts(it.first)
+                // Then ask the camera directly, in RTSP, which paths it serves.
+                // ExoPlayer reports every negotiation failure as "Source error";
+                // this logs the camera's actual status line and headers.
+                if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
             }
         }.start()
         openPlayer()
@@ -112,7 +116,7 @@ class VideoPipe(private val ctx: Context) {
                     FrameBus.lastError = msg
                     FrameBus.connected = false
                     attemptIdx++
-                    handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
+                    handler.postDelayed({ if (running) openPlayer() }, nextDelay())
                 } else {
                     if (hp != null) Log.i(TAG, "reachable ${hp.first}:${hp.second} — negotiating RTSP")
                     buildPlayer(a)
@@ -149,12 +153,13 @@ class VideoPipe(private val ctx: Context) {
                         // delivering, in which case retry it rather than
                         // wandering off a source we know is good.
                         if (!everPlayed) attemptIdx++
-                        if (running) handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
+                        if (running) handler.postDelayed({ if (running) openPlayer() }, nextDelay())
                     }
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         playing = isPlaying
                         if (isPlaying) {
                             everPlayed = true
+                            sweeps = 0            // healthy again: retry fast if it drops
                             Log.i(TAG, "PLAYING $a")
                             FrameBus.lastError = ""
                         } else {
@@ -173,8 +178,23 @@ class VideoPipe(private val ctx: Context) {
             Log.e(TAG, "openPlayer failed for $a: ${e.message}")
             FrameBus.lastError = "$a — ${e.message}"
             attemptIdx++
-            if (running) handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
+            if (running) handler.postDelayed({ if (running) openPlayer() }, nextDelay())
         }
+    }
+
+    /**
+     * Back off once a whole sweep has failed. Retrying every 1.5 s forever tore
+     * down and rebuilt an ExoPlayer twice a second for as long as the app was
+     * open — pointless load on the GCS when the camera plainly is not going to
+     * answer. Each completed sweep doubles the wait to a 30 s ceiling; the first
+     * sweep still runs at full speed so a working camera is found quickly.
+     */
+    private fun nextDelay(): Long {
+        if (attemptIdx > 0 && attemptIdx % attempts.size == 0) {
+            sweeps++
+            Log.w(TAG, "sweep $sweeps failed on all ${attempts.size} candidates — backing off")
+        }
+        return minOf(RETRY_MS shl minOf(sweeps, 5), MAX_RETRY_MS)
     }
 
     /** Pulls the newest frame off the TextureView and republishes it as JPEG. */
@@ -219,7 +239,8 @@ class VideoPipe(private val ctx: Context) {
         private const val TAG = "VideoPipe"
         private const val JPEG_QUALITY = 70
         private const val TIMEOUT_MS = 6000   // per candidate, before moving on
-        private const val RETRY_MS = 1500L    // pause between candidates
+        private const val RETRY_MS = 1500L      // pause between candidates
+        private const val MAX_RETRY_MS = 30000L // ceiling once sweeps keep failing
         private val GRAB_MS = (1000L / Config.VIDEO_FPS)
     }
 }

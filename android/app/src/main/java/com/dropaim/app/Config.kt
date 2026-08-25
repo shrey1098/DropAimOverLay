@@ -15,6 +15,11 @@ object Config {
         "rtsp://192.168.144.108:555/stream=2",   // second sensor
         "rtsp://192.168.144.108:554/main"        // legacy single-sensor path
     )
+    // Ask the camera in raw RTSP which paths it serves, once at startup, and log
+    // the answers. Costs a few seconds of background work; turn off once the
+    // correct URL is known and pinned at the top of rtspUrls.
+    const val RTSP_PATH_SWEEP = true
+
     const val MAVLINK_PORT  = 14551                        // datalink -> app
     const val QGC_PORT      = 14550                        // app <-> QGroundControl (localhost)
     const val TARGET_SYS    = 1
