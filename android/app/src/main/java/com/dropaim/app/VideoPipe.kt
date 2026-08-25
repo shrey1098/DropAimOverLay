@@ -83,6 +83,7 @@ class VideoPipe(private val ctx: Context) {
                 // ExoPlayer reports every negotiation failure as "Source error";
                 // this logs the camera's actual status line and headers.
                 if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
+                else RtspProbe.check(Config.rtspUrls)
             }
         }.start()
         openPlayer()
@@ -133,6 +134,12 @@ class VideoPipe(private val ctx: Context) {
             val src = RtspMediaSource.Factory()
                 .setForceUseRtpTcp(a.tcp)
                 .setTimeoutMs(TIMEOUT_MS)
+                // The camera answers our own raw DESCRIBE with 200 but gives
+                // media3 406 for the identical URL, so it is discriminating on
+                // the request headers. Match the User-Agent that works, and log
+                // the conversation so the remaining difference is visible.
+                .setUserAgent(Config.RTSP_USER_AGENT)
+                .setDebugLoggingEnabled(Config.RTSP_DEBUG_LOG)
                 .createMediaSource(MediaItem.fromUri(a.url))
 
             val p = ExoPlayer.Builder(ctx).build().apply {

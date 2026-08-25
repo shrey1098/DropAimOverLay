@@ -69,9 +69,11 @@ object RtspProbe {
                 Log.i(TAG, "$url -> ${r.statusLine} $note")
                 if (r.code == 200) {
                     working += url
-                    // The SDP names the codec — the one thing that decides whether
-                    // ExoPlayer can play this stream at all.
-                    r.body.lines().filter { it.startsWith("m=") || it.startsWith("a=rtpmap") }
+                    // Dump the WHOLE SDP. The codec matters, but so do a=control
+                    // (which media3 uses to build its SETUP URL) and a=fmtp
+                    // (sprop parameter sets) — those are where a stream that
+                    // describes fine can still fail to set up.
+                    r.body.lines().filter { it.isNotBlank() }
                         .forEach { Log.i(TAG, "    $it") }
                 }
             }
@@ -80,6 +82,22 @@ object RtspProbe {
             Log.e(TAG, "===== sweep finished: NO path returned 200 =====")
         else
             Log.i(TAG, "===== sweep finished: WORKING -> ${working.joinToString(", ")} =====")
+    }
+
+    /**
+     * DESCRIBE just the configured URLs and log their SDP. Once the sweep has
+     * identified the right paths there is no reason to spend 40 s rediscovering
+     * them on every launch, but the SDP is still worth having in the log.
+     */
+    fun check(urls: List<String>) {
+        for (url in urls) {
+            val hp = NetDiag.hostPort(url) ?: continue
+            val r = try { describe(hp.first, hp.second, url) } catch (e: Exception) {
+                Log.w(TAG, "$url -> ${e.javaClass.simpleName}: ${e.message}"); null
+            } ?: continue
+            Log.i(TAG, "$url -> ${r.statusLine}")
+            r.body.lines().filter { it.isNotBlank() }.forEach { Log.i(TAG, "    $it") }
+        }
     }
 
     /** OPTIONS then DESCRIBE against one URL. Returns the DESCRIBE response. */

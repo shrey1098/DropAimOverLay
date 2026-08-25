@@ -10,15 +10,28 @@ object Config {
     // works through the list rather than being pinned to one guess.
     // Add credentials inline if the camera demands them:
     //   "rtsp://admin:pass@192.168.144.108:554/stream=1"
+    // Confirmed by RtspProbe against the C13: each port serves exactly one
+    // stream, and DESCRIBE returns 200 + SDP on these two and 454 on everything
+    // else. Both are H.265 (RTP payload 96).
+    //   554 -> stream=1   (555/stream=1 answers 454)
+    //   555 -> stream=2   (554/stream=2 answers 454)
     var   rtspUrls          = listOf(
-        "rtsp://192.168.144.108:554/stream=1",   // thermal
-        "rtsp://192.168.144.108:555/stream=2",   // second sensor
-        "rtsp://192.168.144.108:554/main"        // legacy single-sensor path
+        "rtsp://192.168.144.108:554/stream=1",
+        "rtsp://192.168.144.108:555/stream=2"
     )
-    // Ask the camera in raw RTSP which paths it serves, once at startup, and log
-    // the answers. Costs a few seconds of background work; turn off once the
-    // correct URL is known and pinned at the top of rtspUrls.
-    const val RTSP_PATH_SWEEP = true
+
+    // The camera answered our own raw DESCRIBE with 200 but gave ExoPlayer 406
+    // for the same URL, so the difference is in the request headers, not the
+    // path. Send the User-Agent that is known to work.
+    const val RTSP_USER_AGENT = "DropAim"
+
+    // Makes media3 log its entire RTSP conversation (tag: RtspClient), which is
+    // the only way to see the headers it actually sends. Turn off for release.
+    const val RTSP_DEBUG_LOG = true
+    // Full path discovery: ~40 s of raw RTSP against every likely path. Already
+    // done for the C13 — the results are pinned in rtspUrls below — so leave it
+    // off and just DESCRIBE the known URLs. Turn on for a new camera.
+    const val RTSP_PATH_SWEEP = false
 
     const val MAVLINK_PORT  = 14551                        // datalink -> app
     const val QGC_PORT      = 14550                        // app <-> QGroundControl (localhost)
