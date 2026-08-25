@@ -48,8 +48,7 @@ object NetDiag {
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_USB) -> "USB"
-                    else -> "OTHER"
+                    else -> "OTHER"   // TRANSPORT_USB needs API 31; minSdk here is 26
                 }
                 val addrs = lp?.linkAddresses?.joinToString(", ") { it.address.hostAddress ?: "?" } ?: ""
                 val routes = lp?.routes?.joinToString(", ") { it.toString() } ?: ""
@@ -71,9 +70,11 @@ object NetDiag {
     }
 
     /** host and port out of an rtsp:// URL, for the preflight probe. */
-    fun hostPort(url: String): Pair<String, Int>? = try {
-        val u = java.net.URI(url)
-        val h = u.host ?: return null
-        Pair(h, if (u.port > 0) u.port else 554)
-    } catch (e: Exception) { null }
+    fun hostPort(url: String): Pair<String, Int>? {
+        return try {
+            val u = java.net.URI(url)
+            val h = u.host
+            if (h.isNullOrBlank()) null else Pair(h, if (u.port > 0) u.port else 554)
+        } catch (e: Exception) { null }
+    }
 }
