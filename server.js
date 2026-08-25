@@ -20,7 +20,6 @@ const dgram     = require('dgram');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const path      = require('path');
-const fs        = require('fs');
 
 // ── CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
@@ -122,35 +121,6 @@ app.post('/api/mode', (req, res) => {
   console.log(`[CMD] Sent DO_SET_MODE ${name} (${cm}) → ${mavDest.address}:${mavDest.port}`);
   res.json({ ok:true, mode:name });
 });
-
-// ── DROP LOG ──────────────────────────────────────────────────────
-// Per-drop accuracy records, appended as JSON lines so nothing is lost on a
-// crash or reload. Exported as CSV for offline drag calibration.
-const LOG_PATH = path.join(__dirname, 'drops.jsonl');
-function readLog(){
-  try { return fs.readFileSync(LOG_PATH,'utf8').trim().split('\n').filter(Boolean).map(l=>JSON.parse(l)); }
-  catch(e){ return []; }
-}
-app.post('/api/log', (req, res) => {
-  try {
-    const rec = req.body || {};
-    rec.server_ts = new Date().toISOString();
-    fs.appendFileSync(LOG_PATH, JSON.stringify(rec) + '\n');
-    console.log(`[LOG] drop #${rec.id ?? '?'} — miss ${rec.miss_m ?? '?'} m (${readLog().length} total)`);
-    res.json({ ok:true, count: readLog().length });
-  } catch(e){ res.status(500).json({ ok:false, err:e.message }); }
-});
-app.get('/api/log/export', (req, res) => {
-  const rows = readLog();
-  if(!rows.length) return res.status(404).send('no drops logged yet');
-  const cols = [...new Set(rows.flatMap(o => Object.keys(o)))];
-  const esc = v => v==null ? '' : /[",\n]/.test(''+v) ? '"'+(''+v).replace(/"/g,'""')+'"' : ''+v;
-  const csv = [cols.join(',')].concat(rows.map(o => cols.map(c => esc(o[c])).join(','))).join('\n');
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="dropaim_log.csv"');
-  res.send(csv);
-});
-app.get('/api/log/count', (req, res) => res.json({ count: readLog().length }));
 
 // ── WEBSOCKET (telemetry only) ────────────────────────────────────
 const wsTelem = new WebSocket.Server({ noServer: true });

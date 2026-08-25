@@ -11,7 +11,6 @@ import fi.iki.elonen.NanoWSD.WebSocket
 import fi.iki.elonen.NanoWSD.WebSocketFrame
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
-import java.io.File
 import java.io.InputStream
 import kotlin.concurrent.thread
 
@@ -23,17 +22,12 @@ import kotlin.concurrent.thread
  *   WS   /telemetry        -> telemetry JSON @5Hz
  *   GET  /api/status
  *   POST /api/mode         -> LOCK/UNLOCK/RTL
- *   POST /api/log          -> append drop record
- *   GET  /api/log/export   -> CSV
- *   GET  /api/log/count
  */
 class WebServer(
     private val ctx: Context,
     private val mav: MavlinkService,
     port: Int = Config.HTTP_PORT
 ) : NanoWSD("127.0.0.1", port) {
-
-    private val logFile = File(ctx.filesDir, "drops.jsonl")
 
     // ── WebSocket: telemetry ─────────────────────────────────────
     override fun openWebSocket(handshake: IHTTPSession): WebSocket = TelemetrySocket(handshake)
@@ -63,9 +57,6 @@ class WebServer(
                 uri == "/stream" -> streamResponse()
                 uri == "/api/status" -> json("""{"video":${FrameBus.connected},"mavlink":${Telemetry.mavlinkOk}}""")
                 uri == "/api/mode" && session.method == Method.POST -> apiMode(session)
-                uri == "/api/log" && session.method == Method.POST -> apiLog(session)
-                uri == "/api/log/export" -> apiLogExport()
-                uri == "/api/log/count" -> json("""{"count":${readLog().size}}""")
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
         } catch (e: Exception) {
@@ -102,44 +93,6 @@ class WebServer(
         val ok = mav.sendMode(name)
         return if (ok) json("""{"ok":true,"mode":"$name"}""")
         else jsonStatus(Response.Status.SERVICE_UNAVAILABLE, """{"ok":false,"err":"no telemetry link yet"}""")
-    }
-
-    private fun apiLog(session: IHTTPSession): Response {
-        val body = postBody(session)
-        val rec = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
-        rec.put("server_ts", java.time.Instant.now().toString())
-        logFile.appendText(rec.toString() + "\n")
-        // Mirror the essentials into the usage logbook that gets uploaded.
-        Metrics.log(ctx, "drop", mapOf(
-            "alt_agl_m" to rec.opt("alt_agl_m"),
-            "wind_ms" to rec.opt("wind_ms"),
-            "miss_m" to rec.opt("miss_m"),
-            "raw_miss_downwind_m" to rec.opt("raw_miss_downwind_m"),
-            "offset_applied" to rec.opt("offset_applied")
-        ))
-        return json("""{"ok":true,"count":${readLog().size}}""")
-    }
-
-    private fun apiLogExport(): Response {
-        val rows = readLog()
-        if (rows.isEmpty()) return jsonStatus(Response.Status.NOT_FOUND, "no drops logged yet")
-        val cols = LinkedHashSet<String>()
-        rows.forEach { o -> o.keys().forEach { cols.add(it) } }
-        fun esc(v: String) = if (v.contains(Regex("[\",\n]"))) "\"" + v.replace("\"", "\"\"") + "\"" else v
-        val sb = StringBuilder(cols.joinToString(",")).append("\n")
-        rows.forEach { o ->
-            sb.append(cols.joinToString(",") { c -> esc(if (o.has(c)) o.get(c).toString() else "") }).append("\n")
-        }
-        val resp = newFixedLengthResponse(Response.Status.OK, "text/csv", sb.toString())
-        resp.addHeader("Content-Disposition", "attachment; filename=\"dropaim_log.csv\"")
-        return resp
-    }
-
-    private fun readLog(): List<JSONObject> {
-        if (!logFile.exists()) return emptyList()
-        return logFile.readLines().filter { it.isNotBlank() }.mapNotNull {
-            try { JSONObject(it) } catch (_: Exception) { null }
-        }
     }
 
     private fun staticAsset(path: String): Response {
