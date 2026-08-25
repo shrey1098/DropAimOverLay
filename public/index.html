@@ -25,8 +25,10 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
 
 /* Video pane */
 .vpane{position:relative;background:#000;overflow:hidden}
-canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:crosshair}
-.nosig{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px}
+canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:crosshair;touch-action:none}
+/* pointer-events:none is load-bearing — this sits above the canvas, so without
+   it the "NO VIDEO" panel swallows every tap and the target cannot be marked. */
+.nosig{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px;pointer-events:none}
 .nosig .icon{font-size:40px;opacity:.3}
 .nosig.hide{display:none}
 
@@ -775,22 +777,32 @@ function drawHz(){
 // ══════════════════════════════════════════════════════════════════
 // TAP + BUTTONS
 // ══════════════════════════════════════════════════════════════════
-MC.addEventListener('click', e => {
+// pointerdown, not click: on a touchscreen 'click' waits for the release and is
+// suppressed entirely if the finger slides a few pixels — easy to do on a moving
+// feed. pointerdown covers mouse and touch alike and marks on contact.
+MC.addEventListener('pointerdown', e => {
+  if(e.pointerType==='mouse' && e.button!==0) return;   // ignore right/middle click
+  e.preventDefault();
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
   targetMark={x:cx,y:cy};
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
 
-  // Capture template + reset tracker
-  const img=vx.getImageData(0,0,VC.width,VC.height);
-  const g=toGray(img);
-  captureTpl(g,VC.width,VC.height,Math.round(targetMarkVideo.x),Math.round(targetMarkVideo.y));
-  prevGray=g; prevW=VC.width; prevH=VC.height;
+  // Capture template + reset tracker. Isolated: with no video yet there are no
+  // pixels to template from, and that must not stop the mark being placed.
+  try {
+    const img=vx.getImageData(0,0,VC.width,VC.height);
+    const g=toGray(img);
+    captureTpl(g,VC.width,VC.height,Math.round(targetMarkVideo.x),Math.round(targetMarkVideo.y));
+    prevGray=g; prevW=VC.width; prevH=VC.height;
+  } catch(err){ console.error('[TPL]', err); prevGray=null; tplGray=null; }
 
-    aimPoint=null;
-  if(telemetry.altAGL&&telemetry.altAGL>1) computeAim(); else hideBanner(2000);
-  try { drawOverlay(); } catch(e) {} // show the mark immediately, don't wait for next frame
+  aimPoint=null;
+  try {
+    if(telemetry.altAGL&&telemetry.altAGL>1) computeAim(); else hideBanner(2000);
+  } catch(err){ console.error('[AIM]', err); }
+  try { drawOverlay(); } catch(err){ console.error('[OVERLAY]', err); } // show the mark immediately, don't wait for next frame
 });
 
 E('calcBtn').addEventListener('click',()=>computeAim());
@@ -801,18 +813,69 @@ E('clearBtn').addEventListener('click',()=>{
 });
 
 // ══════════════════════════════════════════════════════════════════
+// POSITION LOCK (BRAKE) / UNLOCK (LOITER)
+// ══════════════════════════════════════════════════════════════════
+let isAligned=false;
+function setAligned(a){
+  if(a===isAligned) return;           // only touch the DOM on change
+  isAligned=a;
+  const b=E('lockBtn');
+  b.disabled=!a;
+  b.style.opacity=a?'1':'.4';
+  b.textContent=a?'🔒 LOCK POSITION':'🔒 LOCK — ALIGN FIRST';
+}
+async function sendMode(mode){
+  try{
+    const r=await fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})});
+    const j=await r.json();
+    if(!j.ok){ showBanner('CMD FAILED: '+(j.err||'error')); hideBanner(2500); }
+    return j.ok;
+  }catch(e){ showBanner('CMD FAILED: no server'); hideBanner(2500); return false; }
+}
+E('lockBtn').addEventListener('click',()=>{
+  if(E('lockBtn').disabled) return;   // guard: only when aligned
+  sendMode('BRAKE');
+  showBanner('🔒 LOCKING — BRAKE'); hideBanner(1500);
+});
+E('unlockBtn').addEventListener('click',()=>{
+  sendMode('LOITER');
+  showBanner('🔓 UNLOCKED — LOITER'); hideBanner(1500);
+});
+E('rtlBtn').addEventListener('click',()=>{
+  // RTL flies the aircraft home autonomously — require an explicit confirm
+  if(!confirm('RTL: the drone will fly HOME autonomously. Continue?')) return;
+  sendMode('RTL');
+  showBanner('🏠 RTL — RETURNING HOME'); hideBanner(2000);
+});
+
+// ══════════════════════════════════════════════════════════════════
 // TELEMETRY WEBSOCKET
 // ══════════════════════════════════════════════════════════════════
 function connectTelem(){
-  const ws=new WebSocket('ws://localhost:3000/telemetry');
-  ws.onopen=()=>console.log('[TELEM] Connected');
-  ws.onmessage=e=>{try{
+  // Derive from the page origin, never a hardcoded host:port. On the GCS the
+  // embedded server falls back off :3000 when it is taken, and 'localhost' can
+  // resolve to ::1 while the server listens only on IPv4 — either one silently
+  // killed telemetry.
+  const wsProto = location.protocol==='https:' ? 'wss://' : 'ws://';
+  const wsHost  = location.host || 'localhost:3000';
+  const ws=new WebSocket(wsProto+wsHost+'/telemetry');
+  ws.onopen=()=>console.log('[TELEM] Connected to '+wsHost);
+  ws.onmessage=e=>{
     if(window.SIM && SIM.on) return;   // simulator drives telemetry in training mode
-    const d=JSON.parse(e.data);
-    telemetry={...telemetry,...d};
-    updateHUD();updateStatus();
-    if(targetMark&&d.altAGL&&d.altAGL>0) computeAim(true);
-  }catch(e){}};
+    try{
+      const d=JSON.parse(e.data);
+      telemetry={...telemetry,...d};
+    }catch(err){ console.error('[TELEM] bad frame', err); return; }
+    // Each of these is isolated: a throw in the HUD must never stop the link
+    // pills from updating, and neither may stop the aim solution. A single
+    // shared try{}catch{} here once left the pills stuck on red while the
+    // telemetry behind them was arriving perfectly well.
+    try{ updateHUD(); }catch(err){ console.error('[HUD]', err); }
+    try{ updateStatus(); }catch(err){ console.error('[STATUS]', err); }
+    try{
+      if(targetMark&&telemetry.altAGL&&telemetry.altAGL>0) computeAim(true);
+    }catch(err){ console.error('[AIM]', err); }
+  };
   ws.onclose=()=>setTimeout(connectTelem,2000);
   ws.onerror=()=>ws.close();
 }

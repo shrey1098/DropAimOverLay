@@ -23,8 +23,12 @@ object Telemetry {
     @Volatile var windDir: Double? = null
     @Volatile var mode: String? = null
 
-    @Volatile var videoOk = false
     @Volatile var mavlinkOk = false
+
+    // Video liveness has exactly one owner: the frame publisher. This used to be
+    // a second @Volatile field that nothing ever wrote, so the UI was told the
+    // feed was dead even while frames were flowing.
+    val videoOk: Boolean get() = FrameBus.connected
 
     fun toJson(): String {
         val o = JSONObject()
