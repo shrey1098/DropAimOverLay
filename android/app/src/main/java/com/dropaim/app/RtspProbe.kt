@@ -16,7 +16,7 @@ import java.net.Socket
  * words decide the fix instead of another guess at the path.
  *
  * What the answers mean:
- *   200 + SDP  -> this path works; put it first in Config.rtspUrls
+ *   200 + SDP  -> this path works; put it first in Config.cameras
  *   401        -> credentials needed; the WWW-Authenticate header names the scheme
  *   404 / 454  -> no such stream at this path
  *   406        -> path exists but the request was unacceptable — the Public and
@@ -97,6 +97,18 @@ object RtspProbe {
             } ?: continue
             Log.i(TAG, "$url -> ${r.statusLine}")
             r.body.lines().filter { it.isNotBlank() }.forEach { Log.i(TAG, "    $it") }
+        }
+    }
+
+    /**
+     * Is there a stream at this URL? A DESCRIBE returning 200 means the sensor
+     * exists on this aircraft; 454 means it does not. Used to decide which
+     * cameras to offer, so one build serves every airframe.
+     */
+    fun describes(url: String): Boolean {
+        val hp = NetDiag.hostPort(url) ?: return false
+        return try { describe(hp.first, hp.second, url)?.code == 200 } catch (e: Exception) {
+            Log.w(TAG, "$url -> ${e.javaClass.simpleName}: ${e.message}"); false
         }
     }
 

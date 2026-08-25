@@ -4,21 +4,38 @@ package com.dropaim.app
 object Config {
     const val HTTP_PORT     = 3000                        // WebView loads http://127.0.0.1:3000/
 
-    // Candidate video sources, tried in order until one plays. A dual-sensor
-    // gimbal publishes thermal and daylight on separate URLs (and sometimes
-    // separate ports), and which one answers varies by payload fit — so the app
-    // works through the list rather than being pinned to one guess.
-    // Add credentials inline if the camera demands them:
-    //   "rtsp://admin:pass@192.168.144.108:554/stream=1"
-    // Confirmed against the C13 by raw RTSP: each port serves exactly one
-    // stream, DESCRIBE returns 200 + SDP on these two and 454 on all 38 other
-    // paths tried. Decoded from the SDP's sprop-sps:
-    //   555/stream=2 -> 640x512  H.265 Main L4.0   THERMAL (sensor-native size)
-    //   554/stream=1 -> 1280x720 H.265 Main L4.0   daylight
-    // Thermal first — it is the sensor this application aims with.
-    var   rtspUrls          = listOf(
-        "rtsp://192.168.144.108:555/stream=2",
-        "rtsp://192.168.144.108:554/stream=1"
+    /**
+     * The camera feeds this airframe might carry. One build serves every drone:
+     * at startup each URL is DESCRIBEd, and only the ones that answer are
+     * offered to the operator. A dual-sensor aircraft shows both and can switch;
+     * a day-only aircraft simply shows one and no switch appears.
+     *
+     * Confirmed against the C13 by raw RTSP — each port serves exactly one
+     * stream, and DESCRIBE returned 200 + SDP on these two and 454 on all 38
+     * other paths tried. Resolutions decoded from the SDP's sprop-sps.
+     *
+     * zoom is the aim-solution scale factor, NOT a camera control: the solver
+     * uses pxPerM = width/(2*alt)*zoom. Day and thermal have different optics,
+     * so each carries its own value and switching cameras switches it too.
+     * calibrated=false means that value is a placeholder — the UI warns, and the
+     * figure must be measured against a known ground distance before that camera
+     * is trusted for aiming.
+     *
+     * Add credentials inline if a camera demands them:
+     *   "rtsp://admin:pass@192.168.144.108:554/stream=1"
+     */
+    data class Camera(
+        val id: String,
+        val label: String,
+        val url: String,
+        val zoom: Int,
+        val calibrated: Boolean,
+    )
+
+    var cameras = listOf(
+        //     id         label      url                                     zoom  calibrated
+        Camera("day",     "DAY",     "rtsp://192.168.144.108:554/stream=1",   22,  true),
+        Camera("thermal", "THERMAL", "rtsp://192.168.144.108:555/stream=2",   22,  false),
     )
 
     // The camera answered our own raw DESCRIBE with 200 but gave ExoPlayer 406
@@ -35,7 +52,7 @@ object Config {
     // the only way to see the headers it actually sends. Turn off for release.
     const val RTSP_DEBUG_LOG = true
     // Full path discovery: ~40 s of raw RTSP against every likely path. Already
-    // done for the C13 — the results are pinned in rtspUrls below — so leave it
+    // done for the C13 — the results are pinned in cameras below — so leave it
     // off and just DESCRIBE the known URLs. Turn on for a new camera.
     const val RTSP_PATH_SWEEP = false
 

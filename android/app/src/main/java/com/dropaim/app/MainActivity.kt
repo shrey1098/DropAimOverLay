@@ -61,7 +61,7 @@ class MainActivity : AppCompatActivity() {
         // the GCS. Fall back rather than leaving the operator with a dead screen.
         for (p in Config.HTTP_PORT until Config.HTTP_PORT + 6) {
             try {
-                server = WebServer(applicationContext, mav, p).also { it.start(SOCKET_TIMEOUT, false) }
+                server = WebServer(applicationContext, mav, video, p).also { it.start(SOCKET_TIMEOUT, false) }
                 boundPort = p
                 Log.i(TAG, "embedded server listening on :$p")
                 break

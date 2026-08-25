@@ -21,6 +21,10 @@ object FrameBus {
     @Volatile var connected = false
     /** The URL and transport currently playing, or the one being tried. */
     @Volatile var activeUrl = ""
+    /** id of the selected camera (Config.Camera.id). */
+    @Volatile var activeCamera = ""
+    /** ids of the cameras this aircraft actually answered for. */
+    @Volatile var availableCameras: Set<String> = emptySet()
     /** Why the last attempt failed — surfaced in the NO VIDEO panel, because
      *  the operator in the field has no logcat. */
     @Volatile var lastError = ""
@@ -57,14 +61,60 @@ class VideoPipe(private val ctx: Context) {
         override fun toString() = "$url [${if (tcp) "TCP" else "UDP"}]"
     }
 
+    /** Which entry of Config.cameras is on screen. */
+    @Volatile private var cameraIdx = 0
+
     /**
-     * Every URL over interleaved TCP first, then every URL over UDP. TCP is
+     * The selected camera's URL over interleaved TCP first, then UDP. TCP is
      * tried first because it traverses the datalink more reliably, but some
-     * cameras only ever implement UDP — pinning the transport was enough on its
-     * own to make a perfectly good camera look dead.
+     * cameras only implement UDP — pinning the transport was enough on its own
+     * to make a working camera look dead. Only the SELECTED camera is tried:
+     * falling through to the other sensor would silently show the operator a
+     * different field of view than the one the aim solution is computed for.
      */
-    private val attempts: List<Attempt> by lazy {
-        Config.rtspUrls.map { Attempt(it, true) } + Config.rtspUrls.map { Attempt(it, false) }
+    private val attempts: List<Attempt>
+        get() {
+            val cam = Config.cameras.getOrNull(cameraIdx) ?: return emptyList()
+            return listOf(Attempt(cam.url, true), Attempt(cam.url, false))
+        }
+
+    /**
+     * Switch sensors. Returns false if the index is unknown. The caller is
+     * responsible for clearing any tracked target: the two sensors differ in
+     * resolution and field of view, so a template captured from one is
+     * meaningless in the other.
+     */
+    fun selectCamera(index: Int): Boolean {
+        val cam = Config.cameras.getOrNull(index) ?: return false
+        if (index == cameraIdx && playing) return true
+        Log.i(TAG, "switching to ${cam.label} (${cam.url})")
+        handler.post {
+            cameraIdx = index
+            attemptIdx = 0
+            sweeps = 0
+            FrameBus.connected = false
+            FrameBus.latest = null          // don't leave the old sensor's last frame on screen
+            FrameBus.activeCamera = cam.id
+            if (running) openPlayer()
+        }
+        return true
+    }
+
+    /**
+     * Ask each configured camera whether it is actually present, so one build
+     * serves both the dual-sensor and the day-only aircraft with no per-drone
+     * editing. A DESCRIBE that returns 200 means the sensor is there.
+     */
+    private fun detectCameras() {
+        val present = Config.cameras.filter { RtspProbe.describes(it.url) }.map { it.id }.toSet()
+        FrameBus.availableCameras = present
+        Log.i(TAG, "cameras present: ${if (present.isEmpty()) "(none answered)" else present.joinToString(", ")}")
+        // If the selected sensor is not on this aircraft, move to one that is.
+        val cur = Config.cameras.getOrNull(cameraIdx)
+        if (cur != null && present.isNotEmpty() && cur.id !in present) {
+            val i = Config.cameras.indexOfFirst { it.id in present }
+            if (i >= 0) { Log.i(TAG, "${cur.label} absent — selecting ${Config.cameras[i].label}"); selectCamera(i) }
+        }
     }
 
     /** Must be called on the main thread; [tv] has to be attached to the view tree. */
@@ -78,13 +128,18 @@ class VideoPipe(private val ctx: Context) {
         // while ExoPlayer is negotiating can be what breaks the negotiation.
         // Wait, and only probe if there is still no picture by then.
         handler.postDelayed({
-            if (!running || FrameBus.connected) return@postDelayed
+            if (!running) return@postDelayed
             Thread {
+                // Which sensors this particular aircraft actually carries. Runs
+                // even once video is up, because the answer decides whether the
+                // operator is offered a DAY/THERMAL switch at all.
+                detectCameras()
+                if (FrameBus.connected) return@Thread
                 NetDiag.logNetworks(ctx)
-                NetDiag.hostPort(Config.rtspUrls.firstOrNull() ?: "")?.let {
+                NetDiag.hostPort(Config.cameras.firstOrNull()?.url ?: "")?.let {
                     NetDiag.scanPorts(it.first)
                     if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
-                    else RtspProbe.check(Config.rtspUrls)
+                    else RtspProbe.check(Config.cameras.map { c -> c.url })
                 }
             }.start()
         }, DIAG_DELAY_MS)

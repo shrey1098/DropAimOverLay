@@ -25,15 +25,16 @@ const path      = require('path');
 // ── CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
   port:        3000,
-  // Candidate video sources, tried in order until one delivers frames — a
-  // dual-sensor gimbal publishes thermal and daylight on separate URLs, and
-  // sometimes separate ports. Each is tried over TCP then UDP.
+  // The sensors this airframe might carry — kept in step with Config.kt.
+  // zoom is the aim-solution scale (pxPerM = width/(2*alt)*zoom), not a camera
+  // control: the two sensors have different optics, so each carries its own and
+  // switching sensors switches it. calibrated:false means the figure is a
+  // placeholder and must be measured against a known ground distance first.
   // Add credentials inline if the camera demands them:
   //   'rtsp://admin:pass@192.168.144.108:554/stream=1'
-  rtspUrls: [
-    'rtsp://192.168.144.108:554/stream=1',   // thermal
-    'rtsp://192.168.144.108:555/stream=2',   // second sensor
-    'rtsp://192.168.144.108:554/main',       // legacy single-sensor path
+  cameras: [
+    { id:'day',     label:'DAY',     url:'rtsp://192.168.144.108:554/stream=1', zoom:22, calibrated:true  },
+    { id:'thermal', label:'THERMAL', url:'rtsp://192.168.144.108:555/stream=2', zoom:22, calibrated:false },
   ],
   mavlinkPort: 14551,
   qgcPort:     14550,                            // QGC forwards here
@@ -55,13 +56,16 @@ let currentFrame  = null;
 // frames when the camera stalls.
 const frameBus    = new EventEmitter();
 frameBus.setMaxListeners(0);
-const videoState  = { connected: false, ffmpeg: null, activeUrl: '', lastError: '', attempt: 0 };
-// Every URL over TCP first, then every URL over UDP. TCP traverses the datalink
-// more reliably, but some cameras only implement UDP — pinning the transport on
-// its own was enough to make a working camera look dead.
-const VIDEO_ATTEMPTS = []
-  .concat(CONFIG.rtspUrls.map(u => ({ url: u, transport: 'tcp' })))
-  .concat(CONFIG.rtspUrls.map(u => ({ url: u, transport: 'udp' })));
+const videoState  = { connected: false, ffmpeg: null, activeUrl: '', lastError: '', attempt: 0, camera: 0 };
+// The SELECTED sensor over TCP first, then UDP. TCP traverses the datalink more
+// reliably, but some cameras only implement UDP — pinning the transport on its
+// own was enough to make a working camera look dead. Only the selected sensor is
+// tried: falling through to the other one would show the operator a different
+// field of view than the aim solution is computed for.
+function videoAttempts() {
+  const c = CONFIG.cameras[videoState.camera];
+  return c ? [{ url:c.url, transport:'tcp' }, { url:c.url, transport:'udp' }] : [];
+}
 const mavState    = {
   connected: false,
   latest: {
@@ -130,6 +134,34 @@ app.get('/api/status', (req, res) => {
   });
 });
 
+// ── SENSOR SELECT ─────────────────────────────────────────────────
+// Kept in step with the Android build so index.html behaves the same in a
+// browser. No DESCRIBE probe here: ffmpeg discovers a missing sensor by failing,
+// so every configured camera is offered.
+app.get('/api/cameras', (req, res) => {
+  res.json({
+    cameras: CONFIG.cameras.map((c, index) => ({ index, ...c, present: true })),
+    active: (CONFIG.cameras[videoState.camera] || {}).id || '',
+    detected: false,
+  });
+});
+
+app.post('/api/camera', (req, res) => {
+  const i = req.body && Number(req.body.index);
+  const c = CONFIG.cameras[i];
+  if(!c) return res.status(400).json({ ok:false, err:'no such camera' });
+  if(i !== videoState.camera){
+    videoState.camera = i;
+    videoState.attempt = 0;
+    videoState.connected = false;
+    currentFrame = null;              // don't leave the other sensor's frame up
+    console.log(`[VIDEO] switching to ${c.label} (${c.url})`);
+    if(videoState.ffmpeg){ try { videoState.ffmpeg.kill('SIGKILL'); } catch(e) {} }
+    // ffmpeg's close handler restarts it, which will pick up the new selection.
+  }
+  res.json({ ok:true, id:c.id, label:c.label, zoom:c.zoom, calibrated:c.calibrated });
+});
+
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.
 app.use(express.json());
 const ALLOWED_MODES = { BRAKE:17, LOITER:5, RTL:6 };
@@ -188,7 +220,9 @@ function probe(url, cb){
 
 function startVideo() {
   if(videoState.ffmpeg) return;
-  const a = VIDEO_ATTEMPTS[videoState.attempt % VIDEO_ATTEMPTS.length];
+  const list = videoAttempts();
+  if(!list.length){ console.log('[VIDEO] no camera configured'); return; }
+  const a = list[videoState.attempt % list.length];
   const label = `${a.url} [${a.transport.toUpperCase()}]`;
   videoState.activeUrl = label;
   probe(a.url, (ok, host, port) => {
@@ -205,7 +239,8 @@ function startVideo() {
 
 function spawnFfmpeg(a, label) {
   if(videoState.ffmpeg) return;
-  console.log(`[VIDEO] Trying ${label} (candidate ${videoState.attempt % VIDEO_ATTEMPTS.length + 1}/${VIDEO_ATTEMPTS.length})`);
+  const n = videoAttempts().length || 1;
+  console.log(`[VIDEO] Trying ${label} (candidate ${videoState.attempt % n + 1}/${n})`);
 
   const ff = spawn('ffmpeg', [
     '-loglevel', 'error',

@@ -26,6 +26,7 @@ import kotlin.concurrent.thread
 class WebServer(
     private val ctx: Context,
     private val mav: MavlinkService,
+    private val video: VideoPipe,
     port: Int = Config.HTTP_PORT
 ) : NanoWSD("127.0.0.1", port) {
 
@@ -63,6 +64,8 @@ class WebServer(
                         .put("videoErr", FrameBus.lastError)
                         .toString())
                 uri == "/api/mode" && session.method == Method.POST -> apiMode(session)
+                uri == "/api/cameras" -> apiCameras()
+                uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
         } catch (e: Exception) {
@@ -99,6 +102,39 @@ class WebServer(
         val ok = mav.sendMode(name)
         return if (ok) json("""{"ok":true,"mode":"$name"}""")
         else jsonStatus(Response.Status.SERVICE_UNAVAILABLE, """{"ok":false,"err":"no telemetry link yet"}""")
+    }
+
+    /**
+     * The sensors on this aircraft. 'present' is what actually answered a
+     * DESCRIBE, so the UI can offer a switch on a dual-sensor drone and stay out
+     * of the way on a day-only one, from the same build.
+     */
+    private fun apiCameras(): Response {
+        val arr = org.json.JSONArray()
+        Config.cameras.forEachIndexed { i, c ->
+            arr.put(JSONObject()
+                .put("index", i)
+                .put("id", c.id)
+                .put("label", c.label)
+                .put("zoom", c.zoom)
+                .put("calibrated", c.calibrated)
+                .put("present", FrameBus.availableCameras.isEmpty() || c.id in FrameBus.availableCameras))
+        }
+        return json(JSONObject()
+            .put("cameras", arr)
+            .put("active", FrameBus.activeCamera.ifEmpty { Config.cameras.firstOrNull()?.id ?: "" })
+            .put("detected", FrameBus.availableCameras.isNotEmpty())
+            .toString())
+    }
+
+    private fun apiSelectCamera(session: IHTTPSession): Response {
+        val body = postBody(session)
+        val idx = try { JSONObject(body).optInt("index", -1) } catch (_: Exception) { -1 }
+        val cam = Config.cameras.getOrNull(idx)
+            ?: return jsonStatus(Response.Status.BAD_REQUEST, """{"ok":false,"err":"no such camera"}""")
+        return if (video.selectCamera(idx))
+            json("""{"ok":true,"id":"${cam.id}","label":"${cam.label}","zoom":${cam.zoom},"calibrated":${cam.calibrated}}""")
+        else jsonStatus(Response.Status.INTERNAL_ERROR, """{"ok":false,"err":"switch failed"}""")
     }
 
     private fun staticAsset(path: String): Response {
