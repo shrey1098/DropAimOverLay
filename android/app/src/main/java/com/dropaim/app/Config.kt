@@ -24,13 +24,34 @@ object Config {
      * Add credentials inline if a camera demands them:
      *   "rtsp://admin:pass@192.168.144.108:554/stream=1"
      */
+    /**
+     * A sensor variant recognised by the resolution it streams. Two thermal
+     * models are fielded — C12 at 384x288 and C13 at 640x512 — on the same URLs,
+     * so the app identifies which one is fitted from the picture itself rather
+     * than asking the operator to pick. Picking wrongly would silently scale
+     * every aim solution by the ratio between the two lenses.
+     */
+    data class Variant(
+        val model: String,
+        val width: Int,
+        val height: Int,
+        val zoom: Double,
+        val calibrated: Boolean,
+    )
+
     data class Camera(
         val id: String,
         val label: String,
         val url: String,
-        val zoom: Int,
+        val zoom: Double,
         val calibrated: Boolean,
-    )
+        /** Resolution-keyed overrides; empty means this camera has one form. */
+        val variants: List<Variant> = emptyList(),
+    ) {
+        /** The variant matching a played resolution, or null for the default. */
+        fun variantFor(w: Int, h: Int): Variant? =
+            variants.firstOrNull { it.width == w && it.height == h }
+    }
 
     /**
      * zoom is NOT the camera's optical zoom setting — it is the ratio between a
@@ -46,14 +67,28 @@ object Config {
      * its HFOV gives: a typical 640x512 thermal at 25-50 degrees lands around
      * 2 to 4.5, nowhere near 1.
      *
-     * THERMAL is set to 1 as the neutral placeholder and flagged uncalibrated;
-     * the panel warns while it is selected. Replace it with the figure from the
-     * C13 thermal's HFOV spec, or measure it, before aiming on thermal.
+     * Both thermal variants are set to 1 as neutral placeholders and flagged
+     * uncalibrated; the panel warns while either is selected. Replace them with
+     * each model's HFOV figure, or measure them, before aiming on thermal.
+     *
+     * DAY is untouched: 22 is the value the completed trials were flown on.
      */
     var cameras = listOf(
-        //     id         label      url                                     zoom  calibrated
-        Camera("day",     "DAY",     "rtsp://192.168.144.108:554/stream=1",   22,  true),
-        Camera("thermal", "THERMAL", "rtsp://192.168.144.108:555/stream=2",    1,  false),
+        Camera(
+            id = "day", label = "DAY",
+            url = "rtsp://192.168.144.108:554/stream=1",
+            zoom = 22.0, calibrated = true,
+        ),
+        Camera(
+            id = "thermal", label = "THERMAL",
+            url = "rtsp://192.168.144.108:555/stream=2",
+            zoom = 1.0, calibrated = false,
+            variants = listOf(
+                //      model   w    h   zoom  calibrated
+                Variant("C12",  384, 288, 1.0, false),
+                Variant("C13",  640, 512, 1.0, false),
+            ),
+        ),
     )
 
     // The camera answered our own raw DESCRIBE with 200 but gave ExoPlayer 406

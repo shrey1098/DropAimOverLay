@@ -25,6 +25,11 @@ object FrameBus {
     @Volatile var activeCamera = ""
     /** ids of the cameras this aircraft actually answered for. */
     @Volatile var availableCameras: Set<String> = emptySet()
+    /** Resolution actually being decoded; 0 until a stream plays. */
+    @Volatile var videoW = 0
+    @Volatile var videoH = 0
+    /** Sensor model identified from that resolution, e.g. "C12" or "C13". */
+    @Volatile var variant = ""
     /** Why the last attempt failed — surfaced in the NO VIDEO panel, because
      *  the operator in the field has no logcat. */
     @Volatile var lastError = ""
@@ -95,6 +100,9 @@ class VideoPipe(private val ctx: Context) {
             FrameBus.connected = false
             FrameBus.latest = null          // don't leave the old sensor's last frame on screen
             FrameBus.activeCamera = cam.id
+            // The other sensor's resolution and model must not carry over — the
+            // aim scale is derived from them.
+            FrameBus.videoW = 0; FrameBus.videoH = 0; FrameBus.variant = ""
             if (running) openPlayer()
         }
         return true
@@ -223,6 +231,25 @@ class VideoPipe(private val ctx: Context) {
                         if (!everPlayed) attemptIdx++
                         if (running) handler.postDelayed({ if (running) openPlayer() }, nextDelay())
                     }
+                    // Two thermal models stream on the same URL and differ only
+                    // in resolution — C12 384x288, C13 640x512 — so the picture
+                    // itself says which lens is fitted. Asking the operator to
+                    // pick would let a wrong choice scale every aim solution.
+                    override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                        if (size.width <= 0 || size.height <= 0) return
+                        FrameBus.videoW = size.width
+                        FrameBus.videoH = size.height
+                        val cam = Config.cameras.getOrNull(cameraIdx)
+                        val v = cam?.variantFor(size.width, size.height)
+                        FrameBus.variant = v?.model ?: ""
+                        Log.i(TAG, "video ${size.width}x${size.height}" +
+                                   (v?.let { " -> ${cam?.label} ${it.model}, aim zoom ${it.zoom}" +
+                                             if (!it.calibrated) " (UNCALIBRATED)" else "" }
+                                    ?: if (cam?.variants?.isNotEmpty() == true)
+                                           " -> unrecognised ${cam.label} variant, using default zoom ${cam.zoom}"
+                                       else ""))
+                    }
+
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         playing = isPlaying
                         if (isPlaying) {

@@ -110,20 +110,28 @@ class WebServer(
      * of the way on a day-only one, from the same build.
      */
     private fun apiCameras(): Response {
+        val activeId = FrameBus.activeCamera.ifEmpty { Config.cameras.firstOrNull()?.id ?: "" }
         val arr = org.json.JSONArray()
         Config.cameras.forEachIndexed { i, c ->
+            // A variant is only known for the camera that is actually playing,
+            // and only once its resolution has arrived. Everything else reports
+            // the camera's own default.
+            val v = if (c.id == activeId) c.variantFor(FrameBus.videoW, FrameBus.videoH) else null
             arr.put(JSONObject()
                 .put("index", i)
                 .put("id", c.id)
                 .put("label", c.label)
-                .put("zoom", c.zoom)
-                .put("calibrated", c.calibrated)
+                .put("zoom", v?.zoom ?: c.zoom)
+                .put("calibrated", v?.calibrated ?: c.calibrated)
+                .put("model", v?.model ?: "")
                 .put("present", FrameBus.availableCameras.isEmpty() || c.id in FrameBus.availableCameras))
         }
         return json(JSONObject()
             .put("cameras", arr)
-            .put("active", FrameBus.activeCamera.ifEmpty { Config.cameras.firstOrNull()?.id ?: "" })
+            .put("active", activeId)
             .put("detected", FrameBus.availableCameras.isNotEmpty())
+            .put("width", FrameBus.videoW)
+            .put("height", FrameBus.videoH)
             .toString())
     }
 

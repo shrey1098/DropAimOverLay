@@ -185,7 +185,9 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
-    <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="1" max="30" value="22" step="1"></div>
+    <!-- step 0.01: a sensor's aim scale is 1/tan(HFOV/2) and lands on
+         fractions (32° -> 3.49). Day's 22 is unchanged and still reachable. -->
+    <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="0.5" max="30" value="22" step="0.01"></div>
     <div class="f"><label>Forward <span id="cfL">+0.15 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0.15" step="0.01"></div>
     <div class="f"><label>Right <span id="crL">-0.50 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="-0.5" step="0.01"></div>
   </div></div>
@@ -841,18 +843,23 @@ async function loadCameras(){
   let d;
   try { d = await fetch('/api/cameras').then(r=>r.json()); }
   catch(e){ return; }                      // browser build without the endpoint
+  const prev = cameras.map(c=>c.id).join(',');
   cameras = (d.cameras||[]).filter(c=>c.present);
   activeCam = d.active;
   const sec=E('camSec'), box=E('camBtns');
   if(cameras.length < 2){ sec.style.display='none'; applyCamZoom(cameras[0]); return; }
   sec.style.display='';
-  box.innerHTML='';
-  cameras.forEach(c=>{
-    const b=document.createElement('button');
-    b.className='btn'; b.textContent=c.label; b.dataset.id=c.id;
-    b.addEventListener('click',()=>selectCamera(c));
-    box.appendChild(b);
-  });
+  // Only rebuild the buttons when the set of sensors changes — this polls every
+  // few seconds and replacing the DOM each time would flicker under the thumb.
+  if(cameras.map(c=>c.id).join(',') !== prev){
+    box.innerHTML='';
+    cameras.forEach(c=>{
+      const b=document.createElement('button');
+      b.className='btn'; b.textContent=c.label; b.dataset.id=c.id;
+      b.addEventListener('click',()=>selectCamera(cameras.find(x=>x.id===c.id)));
+      box.appendChild(b);
+    });
+  }
   paintCamButtons();
   applyCamZoom(cameras.find(c=>c.id===activeCam));
 }
@@ -862,23 +869,29 @@ function paintCamButtons(){
     const on = b.dataset.id===activeCam;
     b.style.background = on ? 'var(--ac)' : 'transparent';
     b.style.color      = on ? '#04121c'  : 'var(--ac)';
+    const c = cameras.find(x=>x.id===b.dataset.id);
+    b.textContent = c && c.model ? c.label+' '+c.model : (c?c.label:b.textContent);
   });
   const c = cameras.find(x=>x.id===activeCam), w=E('camWarn');
   if(c && !c.calibrated){
     w.style.display='';
-    w.textContent='⚠ '+c.label+' zoom scale is NOT calibrated. Aim solutions on this '
-                 +'sensor are unreliable until the Zoom value is set against a known '
-                 +'ground distance.';
+    w.textContent='⚠ '+(c.model?c.label+' '+c.model:c.label)+' zoom scale is NOT calibrated. '
+                 +'Aim solutions on this sensor are unreliable until the Zoom value is set '
+                 +'against a known ground distance.';
   } else w.style.display='none';
 }
 
 // Each sensor carries its own aim scale. Carrying the day camera's 22× over to
 // a thermal sensor with different optics would compute a confidently wrong
-// aim point, so the value follows the sensor.
+// aim point, so the value follows the sensor — and, once the stream reports its
+// resolution, the specific model of that sensor.
 function applyCamZoom(c){
-  if(!c) return;
+  if(!c || !isFinite(c.zoom) || c.zoom<=0) return;
   const z=E('zoom');
-  if(z){ z.value=c.zoom; E('zmL').textContent=c.zoom.toFixed?c.zoom.toFixed(0)+'×':c.zoom+'×'; }
+  if(!z || parseFloat(z.value)===c.zoom) return;
+  z.value=c.zoom;
+  E('zmL').textContent=(Number.isInteger(c.zoom)?c.zoom.toFixed(0):c.zoom.toFixed(2))+'×';
+  if(targetMark) computeAim(true);        // rescale an existing solution
 }
 
 async function selectCamera(c){
@@ -898,8 +911,11 @@ async function selectCamera(c){
 }
 
 loadCameras();
-// The aircraft is probed a little after start-up, so re-read once the answer is in.
-setTimeout(loadCameras, 30000);
+// Two things arrive late and both change what the panel should say: which
+// sensors this airframe answered for (probed ~25 s in) and which thermal model
+// is fitted (known only once the stream reports its resolution). Poll rather
+// than guess when that is.
+setInterval(loadCameras, 5000);
 
 // ══════════════════════════════════════════════════════════════════
 // POSITION LOCK (BRAKE) / UNLOCK (LOITER)
@@ -1007,7 +1023,7 @@ bind('da','daL',v=>v.toFixed(3)+' m²');
 bind('dc','dcL',v=>v.toFixed(2));
 bind('cf','cfL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
-bind('zoom','zmL',v=>v.toFixed(0)+'×');
+bind('zoom','zmL',v=>(Number.isInteger(v)?v.toFixed(0):v.toFixed(2))+'×');
 
 // ══════════════════════════════════════════════════════════════════
 // PAYLOAD PRESETS — calibre selector + locked tuning sliders

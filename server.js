@@ -35,9 +35,18 @@ const CONFIG = {
   // zoom = 1/tan(HFOV/2), so a fixed-lens sensor is NOT zoom 0 — zero makes
   // pixels-per-metre zero and the aim point undefined. HFOV 50/40/32/25 deg
   // give 2.14/2.75/3.49/4.51. Thermal is 1 as a flagged placeholder.
+  // Two thermal models are fielded on identical URLs — C12 384x288 and C13
+  // 640x512 — and the Android build tells them apart from the resolution the
+  // stream reports, applying that variant's zoom. This Node build has no such
+  // callback from ffmpeg, so it uses the camera default; the browser version is
+  // for bench work, and thermal aim needs calibrating there by hand.
   cameras: [
     { id:'day',     label:'DAY',     url:'rtsp://192.168.144.108:554/stream=1', zoom:22, calibrated:true  },
-    { id:'thermal', label:'THERMAL', url:'rtsp://192.168.144.108:555/stream=2', zoom:1,  calibrated:false },
+    { id:'thermal', label:'THERMAL', url:'rtsp://192.168.144.108:555/stream=2', zoom:1,  calibrated:false,
+      variants: [
+        { model:'C12', width:384, height:288, zoom:1, calibrated:false },
+        { model:'C13', width:640, height:512, zoom:1, calibrated:false },
+      ] },
   ],
   mavlinkPort: 14551,
   qgcPort:     14550,                            // QGC forwards here
