@@ -73,7 +73,14 @@ class VideoPipe(private val ctx: Context) {
         // One-shot dump of what this device thinks its networks are. The usual
         // reason a good camera is unreachable is the GCS holding a mobile-data
         // default route, so packets for 192.168.144.x never touch the datalink.
-        Thread { NetDiag.logNetworks(ctx) }.start()
+        Thread {
+            NetDiag.logNetworks(ctx)
+            // Then find out which ports the camera actually answers on, so the
+            // URL list can be corrected from evidence instead of guesswork.
+            NetDiag.hostPort(Config.rtspUrls.firstOrNull() ?: "")?.let {
+                NetDiag.scanPorts(it.first)
+            }
+        }.start()
         openPlayer()
         handler.postDelayed(grabber, GRAB_MS)
     }

@@ -69,6 +69,23 @@ object NetDiag {
         } catch (e: Exception) { Log.w(TAG, "interface enumeration failed: ${e.message}") }
     }
 
+    /**
+     * Which ports is the camera actually listening on? Guessing RTSP paths is
+     * pointless until we know the port is even open, and the device shell has no
+     * usable port-test tool (Android runs mksh/toybox, so bash's /dev/tcp does
+     * not exist and netcat is usually absent). Doing it here in Java is the only
+     * reliable way to find out from the GCS itself.
+     */
+    fun scanPorts(host: String) {
+        val ports = intArrayOf(80, 554, 555, 8000, 8080, 8554, 8899, 88)
+        val open = ports.filter { reachable(host, it, 1200) }
+        if (open.isEmpty())
+            Log.e(TAG, "port scan $host: NOTHING open of ${ports.joinToString(",")} " +
+                       "— the camera is not reachable from this device")
+        else
+            Log.i(TAG, "port scan $host: OPEN ${open.joinToString(", ")}")
+    }
+
     /** host and port out of an rtsp:// URL, for the preflight probe. */
     fun hostPort(url: String): Pair<String, Int>? {
         return try {
