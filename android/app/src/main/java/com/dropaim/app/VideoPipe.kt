@@ -142,6 +142,10 @@ class VideoPipe(private val ctx: Context) {
                 // the conversation so the remaining difference is visible.
                 .setUserAgent(Config.RTSP_USER_AGENT)
                 .setDebugLoggingEnabled(Config.RTSP_DEBUG_LOG)
+                // media3 sends DESCRIBE without an Accept header; this camera
+                // answers 406 unless it is present. It offers no header API, so
+                // the header is inserted at the socket.
+                .let { if (Config.RTSP_ADD_ACCEPT) it.setSocketFactory(RtspAcceptFixSocketFactory()) else it }
                 .createMediaSource(MediaItem.fromUri(a.url))
 
             val p = ExoPlayer.Builder(ctx).build().apply {

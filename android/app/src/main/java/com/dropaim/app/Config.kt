@@ -26,6 +26,11 @@ object Config {
     // path. Send the User-Agent that is known to work.
     const val RTSP_USER_AGENT = "DropAim"
 
+    // media3 omits 'Accept: application/sdp' from DESCRIBE. This camera's
+    // rtsp_demo firmware requires it and returns 406 without it — proven by
+    // capturing both requests to the same URL seconds apart. See RtspAcceptFix.
+    const val RTSP_ADD_ACCEPT = true
+
     // Makes media3 log its entire RTSP conversation (tag: RtspClient), which is
     // the only way to see the headers it actually sends. Turn off for release.
     const val RTSP_DEBUG_LOG = true
