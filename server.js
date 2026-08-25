@@ -32,9 +32,12 @@ const CONFIG = {
   // placeholder and must be measured against a known ground distance first.
   // Add credentials inline if the camera demands them:
   //   'rtsp://admin:pass@192.168.144.108:554/stream=1'
+  // zoom = 1/tan(HFOV/2), so a fixed-lens sensor is NOT zoom 0 — zero makes
+  // pixels-per-metre zero and the aim point undefined. HFOV 50/40/32/25 deg
+  // give 2.14/2.75/3.49/4.51. Thermal is 1 as a flagged placeholder.
   cameras: [
     { id:'day',     label:'DAY',     url:'rtsp://192.168.144.108:554/stream=1', zoom:22, calibrated:true  },
-    { id:'thermal', label:'THERMAL', url:'rtsp://192.168.144.108:555/stream=2', zoom:22, calibrated:false },
+    { id:'thermal', label:'THERMAL', url:'rtsp://192.168.144.108:555/stream=2', zoom:1,  calibrated:false },
   ],
   mavlinkPort: 14551,
   qgcPort:     14550,                            // QGC forwards here

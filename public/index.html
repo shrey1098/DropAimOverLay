@@ -630,7 +630,16 @@ function computeAim(silent=false){
   // Zoom narrows the FOV by the zoom factor, shrinking ground-width-in-view
   // by the same factor, so pixels-per-metre scales linearly with zoom.
   const zoomEl=E('zoom');
-  const zoom=zoomEl?parseFloat(zoomEl.value):22; // fall back if slider missing
+  let zoom=zoomEl?parseFloat(zoomEl.value):22;   // fall back if slider missing
+  // Guard: zoom is a divisor of field of view, so zero or negative makes
+  // pixels-per-metre zero or inverted — every metre would map to no pixels and
+  // the aim marker would be undefined or on the wrong side. Refuse rather than
+  // draw a confident wrong answer.
+  if(!isFinite(zoom) || zoom <= 0){
+    console.error('[AIM] invalid zoom', zoom, '- using 1x');
+    showBanner('⚠ ZOOM INVALID — AIM SCALE FORCED TO 1×'); hideBanner(4000);
+    zoom = 1;
+  }
   const pxPerM=MC.width/(2*height)*zoom;
 
   aimPoint={

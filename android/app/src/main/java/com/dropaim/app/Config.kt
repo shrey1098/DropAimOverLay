@@ -32,10 +32,28 @@ object Config {
         val calibrated: Boolean,
     )
 
+    /**
+     * zoom is NOT the camera's optical zoom setting — it is the ratio between a
+     * 90-degree reference field of view and this sensor's actual one:
+     *
+     *     zoom = 1 / tan(HFOV / 2)
+     *
+     *     HFOV   90    60    50    45    40    35    32    25    20    12
+     *     zoom  1.00  1.73  2.14  2.41  2.75  3.17  3.49  4.51  5.67  9.51
+     *
+     * So a fixed-lens sensor is not zoom 0 — zero would make pixels-per-metre
+     * zero and the aim point undefined. A fixed lens simply has whatever value
+     * its HFOV gives: a typical 640x512 thermal at 25-50 degrees lands around
+     * 2 to 4.5, nowhere near 1.
+     *
+     * THERMAL is set to 1 as the neutral placeholder and flagged uncalibrated;
+     * the panel warns while it is selected. Replace it with the figure from the
+     * C13 thermal's HFOV spec, or measure it, before aiming on thermal.
+     */
     var cameras = listOf(
         //     id         label      url                                     zoom  calibrated
         Camera("day",     "DAY",     "rtsp://192.168.144.108:554/stream=1",   22,  true),
-        Camera("thermal", "THERMAL", "rtsp://192.168.144.108:555/stream=2",   22,  false),
+        Camera("thermal", "THERMAL", "rtsp://192.168.144.108:555/stream=2",    1,  false),
     )
 
     // The camera answered our own raw DESCRIBE with 200 but gave ExoPlayer 406
