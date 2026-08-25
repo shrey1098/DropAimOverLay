@@ -17,6 +17,7 @@ const express   = require('express');
 const http      = require('http');
 const WebSocket = require('ws');
 const dgram     = require('dgram');
+const net       = require('net');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const path      = require('path');
@@ -168,11 +169,42 @@ setInterval(() => {
 const SOI = Buffer.from([0xFF, 0xD8]);   // JPEG start-of-image
 const EOI = Buffer.from([0xFF, 0xD9]);   // JPEG end-of-image
 
+// Can we open a TCP socket to the camera at all? Separates "unreachable host"
+// (wrong IP, not on the camera's network) from "reachable but RTSP refused"
+// (wrong path, auth, codec) — two faults with entirely different fixes.
+function probe(url, cb){
+  let host, port;
+  try { const u = new URL(url); host = u.hostname; port = u.port ? +u.port : 554; }
+  catch(e){ return cb(true); }               // unparseable — let ffmpeg say why
+  const s = new net.Socket();
+  let done = false;
+  const finish = ok => { if(done) return; done = true; s.destroy(); cb(ok, host, port); };
+  s.setTimeout(2000);
+  s.once('connect', () => finish(true));
+  s.once('timeout', () => finish(false));
+  s.once('error',   () => finish(false));
+  s.connect(port, host);
+}
+
 function startVideo() {
   if(videoState.ffmpeg) return;
   const a = VIDEO_ATTEMPTS[videoState.attempt % VIDEO_ATTEMPTS.length];
   const label = `${a.url} [${a.transport.toUpperCase()}]`;
   videoState.activeUrl = label;
+  probe(a.url, (ok, host, port) => {
+    if(!ok){
+      const msg = `Cannot reach ${host}:${port} — nothing is answering there.`;
+      console.log(`[VIDEO] UNREACHABLE ${label} — ${msg}`);
+      videoState.lastError = msg;
+      videoState.attempt++;
+      return setTimeout(startVideo, 1500);
+    }
+    spawnFfmpeg(a, label);
+  });
+}
+
+function spawnFfmpeg(a, label) {
+  if(videoState.ffmpeg) return;
   console.log(`[VIDEO] Trying ${label} (candidate ${videoState.attempt % VIDEO_ATTEMPTS.length + 1}/${VIDEO_ATTEMPTS.length})`);
 
   const ff = spawn('ffmpeg', [

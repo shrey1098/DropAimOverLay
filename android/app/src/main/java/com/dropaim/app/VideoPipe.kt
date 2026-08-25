@@ -70,13 +70,51 @@ class VideoPipe(private val ctx: Context) {
         if (running) return
         running = true
         textureView = tv
+        // One-shot dump of what this device thinks its networks are. The usual
+        // reason a good camera is unreachable is the GCS holding a mobile-data
+        // default route, so packets for 192.168.144.x never touch the datalink.
+        Thread { NetDiag.logNetworks(ctx) }.start()
         openPlayer()
         handler.postDelayed(grabber, GRAB_MS)
     }
 
+    /**
+     * Preflight the candidate off the main thread, then build the player on it.
+     * The TCP probe blocks for up to two seconds, which is an ANR if run inline.
+     */
     private fun openPlayer() {
         if (attempts.isEmpty()) { Log.e(TAG, "no RTSP URLs configured"); return }
         val a = attempts[attemptIdx % attempts.size]
+        FrameBus.activeUrl = a.toString()
+
+        Thread {
+            // Can we even open a TCP socket to the camera? This separates
+            // "unreachable host" (wrong IP, GCS not on the camera's network,
+            // traffic leaving via mobile data) from "reachable but RTSP refused"
+            // (wrong path, auth, codec) — two faults with completely different
+            // fixes that otherwise look identical to the operator.
+            val hp = NetDiag.hostPort(a.url)
+            val reachable = hp == null || NetDiag.reachable(hp.first, hp.second)
+            handler.post {
+                if (!running) return@post
+                if (!reachable) {
+                    val msg = "Cannot reach ${hp!!.first}:${hp.second} — nothing is " +
+                              "answering there. Check the GCS holds an address on the " +
+                              "camera's subnet."
+                    Log.e(TAG, "UNREACHABLE $a — $msg")
+                    FrameBus.lastError = msg
+                    FrameBus.connected = false
+                    attemptIdx++
+                    handler.postDelayed({ if (running) openPlayer() }, RETRY_MS)
+                } else {
+                    if (hp != null) Log.i(TAG, "reachable ${hp.first}:${hp.second} — negotiating RTSP")
+                    buildPlayer(a)
+                }
+            }
+        }.start()
+    }
+
+    private fun buildPlayer(a: Attempt) {
         try {
             player?.release()
             playing = false
