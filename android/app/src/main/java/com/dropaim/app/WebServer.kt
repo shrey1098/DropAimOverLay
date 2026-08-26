@@ -66,6 +66,8 @@ class WebServer(
                 uri == "/api/mode" && session.method == Method.POST -> apiMode(session)
                 uri == "/api/cameras" -> apiCameras()
                 uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
+                uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
+                uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
         } catch (e: Exception) {
@@ -110,9 +112,10 @@ class WebServer(
      * of the way on a day-only one, from the same build.
      */
     private fun apiCameras(): Response {
-        val activeId = FrameBus.activeCamera.ifEmpty { Config.cameras.firstOrNull()?.id ?: "" }
+        val cams = Settings.cameras
+        val activeId = FrameBus.activeCamera.ifEmpty { cams.firstOrNull()?.id ?: "" }
         val arr = org.json.JSONArray()
-        Config.cameras.forEachIndexed { i, c ->
+        cams.forEachIndexed { i, c ->
             // A variant is only known for the camera that is actually playing,
             // and only once its resolution has arrived. Everything else reports
             // the camera's own default.
@@ -138,11 +141,63 @@ class WebServer(
     private fun apiSelectCamera(session: IHTTPSession): Response {
         val body = postBody(session)
         val idx = try { JSONObject(body).optInt("index", -1) } catch (_: Exception) { -1 }
-        val cam = Config.cameras.getOrNull(idx)
+        val cam = Settings.cameras.getOrNull(idx)
             ?: return jsonStatus(Response.Status.BAD_REQUEST, """{"ok":false,"err":"no such camera"}""")
         return if (video.selectCamera(idx))
             json("""{"ok":true,"id":"${cam.id}","label":"${cam.label}","zoom":${cam.zoom},"calibrated":${cam.calibrated}}""")
         else jsonStatus(Response.Status.INTERNAL_ERROR, """{"ok":false,"err":"switch failed"}""")
+    }
+
+    /**
+     * Change the MAVLink/QGC ports or a camera URL without a rebuild.
+     *
+     * Applied live: rebinding the socket and re-opening the stream is the whole
+     * point — an operator who has to reinstall the app to move a port has not
+     * been given a setting, they have been given a config file. Only what
+     * actually changed is restarted, so editing a camera URL does not drop
+     * telemetry.
+     */
+    private fun apiSaveSettings(session: IHTTPSession): Response {
+        val body = postBody(session)
+        val o = try { JSONObject(body) } catch (_: Exception) {
+            return jsonStatus(Response.Status.BAD_REQUEST, """{"ok":false,"err":"malformed request"}""")
+        }
+
+        val oldMav = Settings.mavlinkPort
+        val oldQgc = Settings.qgcPort
+        val oldUrls = Settings.cameras.associate { it.id to it.url }
+
+        if (o.optBoolean("reset", false)) {
+            Settings.reset(ctx)
+        } else {
+            // -1 for a key that is present but not a number, so validation
+            // rejects it by name instead of silently keeping the old port.
+            val mavPort = if (o.has("mavlinkPort")) o.optInt("mavlinkPort", -1) else null
+            val qgcPort = if (o.has("qgcPort")) o.optInt("qgcPort", -1) else null
+            val urls = HashMap<String, String>()
+            o.optJSONObject("cameras")?.let { c ->
+                c.keys().forEach { k -> urls[k] = c.optString(k, "") }
+            }
+            val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null)
+            if (err != null)
+                return jsonStatus(Response.Status.BAD_REQUEST,
+                    JSONObject().put("ok", false).put("err", err).toString())
+        }
+
+        val portsChanged = Settings.mavlinkPort != oldMav || Settings.qgcPort != oldQgc
+        val urlsChanged  = Settings.cameras.associate { it.id to it.url } != oldUrls
+        // This runs on an HTTP worker thread, not the main thread, so the brief
+        // block inside restart() is safe here.
+        if (portsChanged) try { mav.restart() } catch (e: Exception) { Log.e(TAG, "mavlink restart: ${e.message}") }
+        if (urlsChanged)  try { video.reload() } catch (e: Exception) { Log.e(TAG, "video reload: ${e.message}") }
+
+        Log.i(TAG, "settings saved (ports changed=$portsChanged urls changed=$urlsChanged)")
+        return json(Settings.toJson()
+            .put("ok", true)
+            .put("mavlinkRestarted", portsChanged)
+            .put("videoRestarted", urlsChanged)
+            .put("platform", "android")
+            .toString())
     }
 
     private fun staticAsset(path: String): Response {

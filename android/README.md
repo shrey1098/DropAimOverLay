@@ -34,7 +34,9 @@ it can read pixels from.
 2. Open the `android/` folder as a project (not the repo root).
 3. First sync downloads Gradle 8.7, AGP 8.5.2, and the libraries. If a library
    fails to resolve, see **Video** below.
-4. Set the camera address if it differs: `Config.kt` → `rtspUrl`.
+4. Set the camera address if it differs: `Config.kt` → `cameras`. (Not required
+   for a one-off: ports and camera URLs are editable in the app itself — see
+   **Ports / config**.)
 5. **Build → Build APK(s)** (or `./gradlew assembleDebug`). The APK lands in
    `app/build/outputs/apk/debug/app-debug.apk`.
 6. Sideload to the G20: `adb install -r app-debug.apk`, or copy the APK across
@@ -72,11 +74,25 @@ RTSP error code and retries every 3 s. Some cameras need the exact stream path
 
 ## Ports / config
 
-All in `Config.kt` — mirrors the old `CONFIG`:
+Defaults are in `Config.kt` — mirrors the old `CONFIG`:
 - HTTP/WebView: `3000` (loopback)
 - MAVLink in (from datalink): `14551`
 - QGC relay: `14550` (loopback)
-- RTSP: `rtspUrl`
+- RTSP: `cameras`
+
+**The three that vary between ground stations are editable in the app**, under
+**⚙ CONNECTION → SETTINGS** at the bottom of the side panel: the MAVLink listen
+port, the QGC port, and each camera's RTSP URL. Skydroid delivers telemetry to
+`14551`; a SIYI controller may hand it to QGC on `14550` instead, and a camera
+may sit at a different address — none of which should need a rebuild, a
+reinstall and a fresh activation code.
+
+Saved in `SharedPreferences` on the device (`Settings.kt`) and applied
+immediately: changing a port rebinds the UDP socket, changing a URL re-opens the
+stream, and only what actually changed is restarted, so editing a camera URL
+does not drop telemetry. Clearing a URL restores the compiled-in default;
+**RESTORE DEFAULTS** clears all of them. `Config.kt` holds the defaults, and
+nothing here touches the ballistics or the aim solution.
 
 ## Known limitations / TODO before ops
 

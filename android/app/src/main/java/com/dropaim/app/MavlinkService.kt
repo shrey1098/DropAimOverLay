@@ -20,6 +20,9 @@ class MavlinkService {
     @Volatile private var running = false
     private var socket: DatagramSocket? = null
     private var qgcAddr = InetAddress.getByName("127.0.0.1")
+    /** Bumped on every restart so a listener thread whose socket has been closed
+     *  out from under it cannot keep running alongside its replacement. */
+    @Volatile private var generation = 0
     // Last non-QGC source we heard telemetry from — where we send commands back.
     @Volatile private var datalinkAddr: InetAddress? = null
     @Volatile private var datalinkPort: Int = 0
@@ -34,6 +37,13 @@ class MavlinkService {
     fun start() {
         if (running) return
         running = true
+        // Read the ports once, here, rather than on every packet: an operator
+        // saving new settings mid-flight must not leave this loop half on the
+        // old port and half on the new one. The restart below is what applies
+        // a change, atomically.
+        val listenPort = Settings.mavlinkPort
+        val qgcPort = Settings.qgcPort
+        val gen = ++generation
         thread(name = "mavlink") {
             try {
                 // SO_REUSEADDR before bind: when the GCS is connected to the
@@ -42,16 +52,16 @@ class MavlinkService {
                 // no telemetry at all for the rest of the session.
                 val s = DatagramSocket(null).apply {
                     reuseAddress = true
-                    bind(java.net.InetSocketAddress(Config.MAVLINK_PORT))
+                    bind(java.net.InetSocketAddress(listenPort))
                 }
                 socket = s
-                Log.i(TAG, "listening UDP :${Config.MAVLINK_PORT}")
+                Log.i(TAG, "listening UDP :$listenPort, relaying to QGC :$qgcPort")
                 val buf = ByteArray(2048)
-                while (running) {
+                while (running && gen == generation) {
                     val pkt = DatagramPacket(buf, buf.size)
                     s.receive(pkt)
                     val data = pkt.data.copyOfRange(0, pkt.length)
-                    val fromQgc = pkt.port == Config.QGC_PORT && pkt.address.isLoopbackAddress
+                    val fromQgc = pkt.port == qgcPort && pkt.address.isLoopbackAddress
                     if (fromQgc) {
                         // Uplink: QGC -> vehicle. Pass straight back to the datalink.
                         val a = datalinkAddr; val p = datalinkPort
@@ -61,19 +71,38 @@ class MavlinkService {
                     // Downlink: datalink -> us. Parse, then relay to QGC.
                     datalinkAddr = pkt.address; datalinkPort = pkt.port
                     if (!Telemetry.mavlinkOk) { Telemetry.mavlinkOk = true; Log.i(TAG, "receiving from ${pkt.address}:${pkt.port}") }
-                    s.send(DatagramPacket(data, data.size, qgcAddr, Config.QGC_PORT))
+                    s.send(DatagramPacket(data, data.size, qgcAddr, qgcPort))
                     parse(data)
                 }
             } catch (e: java.net.BindException) {
-                Log.e(TAG, "UDP :${Config.MAVLINK_PORT} is already held by another app " +
+                Log.e(TAG, "UDP :$listenPort is already held by another app " +
                            "and would not share it — no telemetry this session (${e.message})")
             } catch (e: Exception) {
-                if (running) Log.e(TAG, "mavlink error: ${e.message}")
+                if (running && gen == generation) Log.e(TAG, "mavlink error: ${e.message}")
+            } finally {
+                if (gen == generation) socket = null
             }
         }
     }
 
-    fun stop() { running = false; socket?.close() }
+    fun stop() { running = false; generation++; socket?.close() }
+
+    /**
+     * Rebind on the ports currently in Settings. Called after the operator saves
+     * a different port — the alternative is telling them to force-close the app
+     * on an aircraft that is powered up and waiting. Blocks briefly, so call it
+     * off the main thread (the HTTP handler already runs on its own).
+     */
+    fun restart() {
+        Log.i(TAG, "restarting on :${Settings.mavlinkPort} -> QGC :${Settings.qgcPort}")
+        stop()
+        // The old socket is closed above, which wakes its receive(); give it a
+        // moment to unwind before rebinding the port it was holding.
+        Thread.sleep(200)
+        Telemetry.mavlinkOk = false
+        datalinkAddr = null; datalinkPort = 0
+        start()
+    }
 
     /** LOCK->BRAKE(17), UNLOCK->LOITER(5), RTL(6). Returns false if no link yet. */
     fun sendMode(name: String): Boolean {

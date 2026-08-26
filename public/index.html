@@ -241,6 +241,23 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <button class="btn" id="simReset">↺ NEW TARGET / RESET</button>
     </div>
   </div></div>
+
+  <!-- The values that differ between ground stations and airframes. Kept behind
+       a button and last in the panel: it is set once per installation, and an
+       operator scrolling mid-flight must not land on it by accident. -->
+  <div class="sec"><div class="sh">⚙ CONNECTION</div><div class="sb">
+    <button class="btn" id="setBtn">⚙ SETTINGS — PORTS &amp; CAMERA URLS</button>
+    <div id="setRows" style="display:none;flex-direction:column;gap:7px">
+      <div style="font-size:9px;color:var(--mt);line-height:1.4">Where this ground station looks for telemetry and video. Nothing here changes the ballistics or the aim solution.</div>
+      <div class="f"><label>MAVLink listen port <span id="setMavD">—</span></label><input type="text" id="setMav" inputmode="numeric" autocomplete="off"></div>
+      <div class="f"><label>QGC port <span id="setQgcD">—</span></label><input type="text" id="setQgc" inputmode="numeric" autocomplete="off"></div>
+      <div id="setCams" style="display:flex;flex-direction:column;gap:7px"></div>
+      <div id="setMsg" style="display:none;font-size:9px;line-height:1.4;border-radius:2px;padding:6px 8px"></div>
+      <button class="btn btn-gn" id="setSave">✓ SAVE &amp; APPLY</button>
+      <button class="btn" id="setReset">↺ RESTORE DEFAULTS</button>
+      <div id="setNote" style="font-size:9px;color:var(--mt);line-height:1.4"></div>
+    </div>
+  </div></div>
 </div>
 </div>
 
@@ -916,6 +933,97 @@ loadCameras();
 // is fitted (known only once the stream reports its resolution). Poll rather
 // than guess when that is.
 setInterval(loadCameras, 5000);
+
+// ══════════════════════════════════════════════════════════════════
+// CONNECTION SETTINGS (PORTS / CAMERA URLS)
+// ══════════════════════════════════════════════════════════════════
+// These were compiled in, so a different ground station — Skydroid delivers
+// telemetry to 14551, SIYI hands it to QGC on 14550 — or a camera at another
+// address meant a rebuild, a reinstall and a fresh activation. The server saves
+// them and rebinds live; only what changed is restarted, so editing a camera URL
+// does not drop telemetry.
+let settings = null;
+
+async function loadSettings(){
+  try { settings = await fetch('/api/settings').then(r=>r.json()); }
+  catch(e){ setMsg('Local server not reachable.', false); return false; }
+  paintSettings();
+  return true;
+}
+
+function paintSettings(){
+  if(!settings) return;
+  E('setMav').value = settings.mavlinkPort;
+  E('setQgc').value = settings.qgcPort;
+  E('setMavD').textContent = 'default '+settings.defaultMavlinkPort;
+  E('setQgcD').textContent = 'default '+settings.defaultQgcPort;
+  const box = E('setCams');
+  box.innerHTML='';
+  (settings.cameras||[]).forEach(c=>{
+    const f=document.createElement('div'); f.className='f';
+    const l=document.createElement('label');
+    l.innerHTML = c.label+' RTSP URL <span>'+(c.overridden?'changed':'default')+'</span>';
+    const i=document.createElement('input');
+    i.type='text'; i.id='setUrl_'+c.id; i.value=c.url; i.autocomplete='off';
+    i.spellcheck=false; i.style.fontSize='10px';
+    f.appendChild(l); f.appendChild(i); box.appendChild(f);
+  });
+  E('setNote').textContent = settings.persisted === false
+    ? 'Browser build: changes apply now but are not kept when the server restarts.'
+    : 'Saved on this device and applied on every launch. Clear a URL to restore its built-in default.';
+}
+
+function setMsg(text, ok){
+  const m=E('setMsg');
+  m.style.display=''; m.textContent=text;
+  m.style.color       = ok ? 'var(--gn)' : 'var(--rd)';
+  m.style.border      = '1px solid '+(ok ? 'rgba(0,255,136,.3)' : 'rgba(255,59,85,.3)');
+  m.style.background  = ok ? 'rgba(0,255,136,.05)' : 'rgba(255,59,85,.05)';
+}
+
+async function postSettings(body, working){
+  setMsg(working, true);
+  let r;
+  try { r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify(body)}).then(x=>x.json()); }
+  catch(e){ setMsg('Could not reach the local server — nothing was changed.', false); return; }
+  // The server validates, not the browser: the same rules have to hold for
+  // whichever build is running, so the message the operator sees is its message.
+  if(!r.ok){ setMsg('✕ '+(r.err||'rejected'), false); return; }
+  settings = r;
+  paintSettings();
+  const parts=[];
+  if(r.mavlinkRestarted) parts.push('telemetry link rebound');
+  if(r.videoRestarted)   parts.push('video restarting — allow a few seconds');
+  setMsg('✓ Saved'+(parts.length?' — '+parts.join(', '):' (no change)'), true);
+  if(r.videoRestarted) loadCameras();
+}
+
+E('setBtn').addEventListener('click', async ()=>{
+  const rows=E('setRows'), open = rows.style.display==='none';
+  if(open){
+    // Load on open, never on a timer: repainting the fields under the operator
+    // would wipe what they were part-way through typing.
+    if(!await loadSettings()) return;
+    E('setMsg').style.display='none';
+  }
+  rows.style.display = open ? 'flex' : 'none';
+  E('setBtn').textContent = open ? '⚙ SETTINGS — CLOSE' : '⚙ SETTINGS — PORTS & CAMERA URLS';
+});
+
+E('setSave').addEventListener('click', ()=>{
+  const urls={};
+  (settings && settings.cameras || []).forEach(c=>{
+    const i=E('setUrl_'+c.id); if(i) urls[c.id]=i.value.trim();
+  });
+  postSettings({
+    mavlinkPort: parseInt(E('setMav').value, 10),
+    qgcPort:     parseInt(E('setQgc').value, 10),
+    cameras:     urls,
+  }, 'Saving…');
+});
+
+E('setReset').addEventListener('click', ()=>postSettings({reset:true}, 'Restoring defaults…'));
 
 // ══════════════════════════════════════════════════════════════════
 // POSITION LOCK (BRAKE) / UNLOCK (LOITER)

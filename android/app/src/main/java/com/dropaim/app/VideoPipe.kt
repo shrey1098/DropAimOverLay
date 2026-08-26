@@ -79,7 +79,7 @@ class VideoPipe(private val ctx: Context) {
      */
     private val attempts: List<Attempt>
         get() {
-            val cam = Config.cameras.getOrNull(cameraIdx) ?: return emptyList()
+            val cam = Settings.cameras.getOrNull(cameraIdx) ?: return emptyList()
             return listOf(Attempt(cam.url, true), Attempt(cam.url, false))
         }
 
@@ -90,7 +90,7 @@ class VideoPipe(private val ctx: Context) {
      * meaningless in the other.
      */
     fun selectCamera(index: Int): Boolean {
-        val cam = Config.cameras.getOrNull(index) ?: return false
+        val cam = Settings.cameras.getOrNull(index) ?: return false
         if (index == cameraIdx && playing) return true
         Log.i(TAG, "switching to ${cam.label} (${cam.url})")
         handler.post {
@@ -114,14 +114,40 @@ class VideoPipe(private val ctx: Context) {
      * editing. A DESCRIBE that returns 200 means the sensor is there.
      */
     private fun detectCameras() {
-        val present = Config.cameras.filter { RtspProbe.describes(it.url) }.map { it.id }.toSet()
+        val cams = Settings.cameras
+        val present = cams.filter { RtspProbe.describes(it.url) }.map { it.id }.toSet()
         FrameBus.availableCameras = present
         Log.i(TAG, "cameras present: ${if (present.isEmpty()) "(none answered)" else present.joinToString(", ")}")
         // If the selected sensor is not on this aircraft, move to one that is.
-        val cur = Config.cameras.getOrNull(cameraIdx)
+        val cur = cams.getOrNull(cameraIdx)
         if (cur != null && present.isNotEmpty() && cur.id !in present) {
-            val i = Config.cameras.indexOfFirst { it.id in present }
-            if (i >= 0) { Log.i(TAG, "${cur.label} absent — selecting ${Config.cameras[i].label}"); selectCamera(i) }
+            val i = cams.indexOfFirst { it.id in present }
+            if (i >= 0) { Log.i(TAG, "${cur.label} absent — selecting ${cams[i].label}"); selectCamera(i) }
+        }
+    }
+
+    /**
+     * Pick up URLs the operator has just changed. Everything the old stream told
+     * us — which sensors answered, the resolution the model was identified from —
+     * was about a different address and must not survive the change.
+     */
+    fun reload() {
+        Log.i(TAG, "reloading video with current settings")
+        handler.post {
+            attemptIdx = 0
+            sweeps = 0
+            FrameBus.connected = false
+            FrameBus.latest = null
+            FrameBus.availableCameras = emptySet()
+            FrameBus.videoW = 0; FrameBus.videoH = 0; FrameBus.variant = ""
+            FrameBus.lastError = ""
+            if (running) {
+                openPlayer()
+                // Re-answer "which sensors are on this aircraft?" for the new
+                // addresses, but not while the player is mid-negotiation — this
+                // firmware serves one client at a time.
+                handler.postDelayed({ if (running) Thread { detectCameras() }.start() }, DIAG_DELAY_MS)
+            }
         }
     }
 
@@ -144,10 +170,10 @@ class VideoPipe(private val ctx: Context) {
                 detectCameras()
                 if (FrameBus.connected) return@Thread
                 NetDiag.logNetworks(ctx)
-                NetDiag.hostPort(Config.cameras.firstOrNull()?.url ?: "")?.let {
+                NetDiag.hostPort(Settings.cameras.firstOrNull()?.url ?: "")?.let {
                     NetDiag.scanPorts(it.first)
                     if (Config.RTSP_PATH_SWEEP) RtspProbe.sweep(it.first)
-                    else RtspProbe.check(Config.cameras.map { c -> c.url })
+                    else RtspProbe.check(Settings.cameras.map { c -> c.url })
                 }
             }.start()
         }, DIAG_DELAY_MS)
@@ -239,7 +265,7 @@ class VideoPipe(private val ctx: Context) {
                         if (size.width <= 0 || size.height <= 0) return
                         FrameBus.videoW = size.width
                         FrameBus.videoH = size.height
-                        val cam = Config.cameras.getOrNull(cameraIdx)
+                        val cam = Settings.cameras.getOrNull(cameraIdx)
                         val v = cam?.variantFor(size.width, size.height)
                         FrameBus.variant = v?.model ?: ""
                         Log.i(TAG, "video ${size.width}x${size.height}" +

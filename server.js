@@ -105,6 +105,10 @@ const app    = express();
 const server = http.createServer(app);
 
 app.use(express.static(path.join(__dirname, 'public')));
+// Before the routes, not after them: Express runs middleware in registration
+// order, so a body parser added below a POST handler never runs for it and that
+// handler sees req.body undefined.
+app.use(express.json());
 
 // MJPEG HTTP stream — browser uses <img src="/stream"> or fetch()
 app.get('/stream', (req, res) => {
@@ -174,8 +178,109 @@ app.post('/api/camera', (req, res) => {
   res.json({ ok:true, id:c.id, label:c.label, zoom:c.zoom, calibrated:c.calibrated });
 });
 
+// ── SETTINGS ──────────────────────────────────────────────────────
+// The handful of values that differ between ground stations and airframes —
+// which MAVLink port telemetry arrives on, which port QGC is using, and the
+// camera URLs. Mirrors Settings.kt so index.html drives both builds.
+//
+// Unlike the Android build these are NOT persisted: this Node server is the
+// bench harness, its config lives in the source file above, and a settings file
+// that silently overrode it would be a trap. The UI is told so.
+const DEFAULTS = {
+  mavlinkPort: CONFIG.mavlinkPort,
+  qgcPort:     CONFIG.qgcPort,
+  cameraUrls:  CONFIG.cameras.map(c => c.url),
+};
+
+function settingsJson(extra) {
+  return Object.assign({
+    platform: 'node',
+    persisted: false,
+    mavlinkPort: CONFIG.mavlinkPort, defaultMavlinkPort: DEFAULTS.mavlinkPort,
+    qgcPort: CONFIG.qgcPort,         defaultQgcPort: DEFAULTS.qgcPort,
+    cameras: CONFIG.cameras.map((c, i) => ({
+      id: c.id, label: c.label, url: c.url,
+      defaultUrl: DEFAULTS.cameraUrls[i],
+      overridden: c.url !== DEFAULTS.cameraUrls[i],
+    })),
+  }, extra || {});
+}
+
+// Same rules as Settings.kt — an operator switching between the two builds must
+// not find one accepting what the other rejects.
+function validateSettings(mav, qgc, urls) {
+  if(!Number.isInteger(mav) || mav < 1024 || mav > 65535) return 'MAVLink port must be between 1024 and 65535';
+  if(!Number.isInteger(qgc) || qgc < 1024 || qgc > 65535) return 'QGC port must be between 1024 and 65535';
+  // Both are UDP ports on this machine; the same number for each would mean
+  // relaying telemetry straight back into our own socket.
+  if(mav === qgc) return `MAVLink and QGC ports must differ (both are ${mav})`;
+  for(const [id, url] of Object.entries(urls || {})){
+    if(!CONFIG.cameras.some(c => c.id === id)) return `unknown camera '${id}'`;
+    const u = String(url).trim();
+    if(!u) continue;                                  // cleared = back to the built-in URL
+    if(!u.startsWith('rtsp://')) return `camera '${id}' URL must start with rtsp://`;
+    try { const p = new URL(u); if(!p.hostname) throw 0; }
+    catch(e){ return `camera '${id}' URL is not a valid address`; }
+  }
+  return null;
+}
+
+function restartMavlink() {
+  console.log(`[MAV] Restarting on :${CONFIG.mavlinkPort} → QGC :${CONFIG.qgcPort}`);
+  mavState.connected = false;
+  mavDest = null;
+  try { if(mavSocket) mavSocket.close(); } catch(e) {}
+  mavSocket = null;
+  // Give the old socket a moment to release the port it was holding.
+  setTimeout(startMavlink, 200);
+}
+
+function restartVideo() {
+  console.log('[VIDEO] Restarting with current settings');
+  videoState.attempt = 0;
+  videoState.connected = false;
+  videoState.lastError = '';
+  currentFrame = null;
+  // ffmpeg's close handler restarts it, which picks up the new URL.
+  if(videoState.ffmpeg){ try { videoState.ffmpeg.kill('SIGKILL'); } catch(e) {} }
+  else startVideo();
+}
+
+app.get('/api/settings', (req, res) => res.json(settingsJson()));
+
+app.post('/api/settings', (req, res) => {
+  const b = req.body || {};
+  const oldMav = CONFIG.mavlinkPort, oldQgc = CONFIG.qgcPort;
+  const oldUrls = CONFIG.cameras.map(c => c.url);
+
+  if(b.reset){
+    CONFIG.mavlinkPort = DEFAULTS.mavlinkPort;
+    CONFIG.qgcPort     = DEFAULTS.qgcPort;
+    CONFIG.cameras.forEach((c, i) => { c.url = DEFAULTS.cameraUrls[i]; });
+  } else {
+    const mav = b.mavlinkPort === undefined ? CONFIG.mavlinkPort : Number(b.mavlinkPort);
+    const qgc = b.qgcPort     === undefined ? CONFIG.qgcPort     : Number(b.qgcPort);
+    const err = validateSettings(mav, qgc, b.cameras);
+    if(err) return res.status(400).json({ ok:false, err });
+    CONFIG.mavlinkPort = mav;
+    CONFIG.qgcPort     = qgc;
+    if(b.cameras) CONFIG.cameras.forEach((c, i) => {
+      if(!(c.id in b.cameras)) return;
+      const u = String(b.cameras[c.id]).trim();
+      c.url = u || DEFAULTS.cameraUrls[i];
+    });
+  }
+
+  const portsChanged = CONFIG.mavlinkPort !== oldMav || CONFIG.qgcPort !== oldQgc;
+  const urlsChanged  = CONFIG.cameras.some((c, i) => c.url !== oldUrls[i]);
+  if(portsChanged) restartMavlink();
+  if(urlsChanged)  restartVideo();
+
+  console.log(`[CFG] Settings saved (ports changed=${portsChanged} urls changed=${urlsChanged})`);
+  res.json(settingsJson({ ok:true, mavlinkRestarted:portsChanged, videoRestarted:urlsChanged }));
+});
+
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.
-app.use(express.json());
 const ALLOWED_MODES = { BRAKE:17, LOITER:5, RTL:6 };
 app.post('/api/mode', (req, res) => {
   const name = (req.body && req.body.mode || '').toUpperCase();

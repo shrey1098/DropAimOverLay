@@ -53,6 +53,11 @@ class MainActivity : AppCompatActivity() {
         sessionStart = System.currentTimeMillis()
         UploadWorker.schedule(applicationContext)
 
+        // Operator overrides (ports, camera URLs) before anything binds a socket
+        // or opens a stream, or the first session after a change would still run
+        // on the compiled-in defaults.
+        Settings.load(this)
+
         video = VideoPipe(applicationContext)
 
         // Bring up the native services first, then the embedded server.
