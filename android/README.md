@@ -94,6 +94,26 @@ does not drop telemetry. Clearing a URL restores the compiled-in default;
 **RESTORE DEFAULTS** clears all of them. `Config.kt` holds the defaults, and
 nothing here touches the ballistics or the aim solution.
 
+## Typechecking without an Android SDK
+
+`../tools/kotlin-typecheck.sh` compiles every Kotlin source in the app in about a
+minute, with no Android SDK and no Gradle. It exists because a full
+`assembleDebug` needs `android.jar`, AAPT2, AGP and the androidx AARs, all of
+which come from `dl.google.com` — on a machine that cannot reach that host there
+is otherwise no way to find a Kotlin error before the APK fails to build.
+
+It compiles against a real `android.jar` (Robolectric's `android-all` for API 34,
+from Maven Central), the real NanoHTTPD jars, and hand-written stubs in
+`../tools/ktcheck/stubs` for androidx alone — whose signatures are transcribed
+from upstream source at the versions `app/build.gradle` pins.
+
+Catches syntax, types, null-safety, overload resolution, bad overrides and our
+own API misuse. Does **not** cover resources, the manifest, ProGuard or
+packaging. It is a fast gate, not a replacement for a real build before you fly.
+
+If you bump `compileSdk`, the Kotlin plugin version or `jvmTarget`, update the
+constants at the top of the script to match.
+
 ## Known limitations / TODO before ops
 
 - Runs in a single foreground **Activity**; if you need video + MAVLink to

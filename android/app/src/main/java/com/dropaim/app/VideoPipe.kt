@@ -359,7 +359,9 @@ class VideoPipe(private val ctx: Context) {
     companion object {
         private const val TAG = "VideoPipe"
         private const val JPEG_QUALITY = 70
-        private const val TIMEOUT_MS = 6000   // per candidate, before moving on
+        // Long, not Int: setTimeoutMs takes a long, and Kotlin will not widen an
+        // Int for it. It only compiled as a bare literal at the call site.
+        private const val TIMEOUT_MS = 6000L  // per candidate, before moving on
         private const val RETRY_MS = 1500L      // pause between candidates
         private const val MAX_RETRY_MS = 30000L // ceiling once sweeps keep failing
         private const val DIAG_DELAY_MS = 25000L // probe only after the player has had its go
