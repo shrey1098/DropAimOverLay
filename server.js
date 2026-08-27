@@ -280,6 +280,107 @@ app.post('/api/settings', (req, res) => {
   res.json(settingsJson({ ok:true, mavlinkRestarted:portsChanged, videoRestarted:urlsChanged }));
 });
 
+// ── MAVLINK SCAN ──────────────────────────────────────────────────
+// Mirrors MavScan.kt so the same UI drives both builds, and so the scan can be
+// exercised against a known sender on the bench before it is trusted in the
+// field. READ-ONLY: opens its own sockets, looks, closes them.
+const SCAN_PORTS = [19856, 19857, 14550, 14551, 14552, 14553, 14555, 14556, 14445, 15550, 18570];
+const SCAN_MS = 6000;
+
+/** MAVLink v1/v2 frames in a buffer -> the system and message ids they carry. */
+function scanDecode(b, sysIds, msgIds) {
+  let i = 0;
+  while (i < b.length - 8) {
+    const v2 = b[i] === 0xFD, v1 = b[i] === 0xFE;
+    if (!v1 && !v2) { i++; continue; }
+    const hl = v2 ? 10 : 6, total = hl + b[i + 1] + 2;
+    if (i + total > b.length) break;
+    sysIds.add(v2 ? b[i + 5] : b[i + 3]);
+    msgIds.add(v2 ? (b[i + 7] | (b[i + 8] << 8) | (b[i + 9] << 16)) : b[i + 5]);
+    i += total;
+  }
+}
+
+function scanInterfaces() {
+  const os = require('os'), out = [];
+  const ifs = os.networkInterfaces();
+  for (const name of Object.keys(ifs)) {
+    const addrs = (ifs[name] || []).filter(a => a.family === 'IPv4' && !a.internal).map(a => a.address);
+    if (addrs.length) out.push({ name, up: true, addresses: addrs });
+  }
+  return out;
+}
+
+/** Every bound UDP socket on this machine. Linux only; the field build is
+ *  Android, and on the bench this is the same file. */
+function scanProcNetUdp() {
+  const out = [];
+  for (const path of ['/proc/net/udp', '/proc/net/udp6']) {
+    try {
+      const lines = require('fs').readFileSync(path, 'utf8').split('\n').slice(1);
+      for (const line of lines) {
+        const c = line.trim().split(/\s+/);
+        if (c.length < 8) continue;
+        const local = c[1].split(':');
+        if (local.length !== 2) continue;
+        const port = parseInt(local[1], 16);
+        if (!Number.isFinite(port)) continue;
+        const hex = local[0];
+        const addr = hex.length === 8
+          ? [3,2,1,0].map(k => parseInt(hex.substr(k*2,2),16)).join('.') : hex;
+        out.push({ port, addr, uid: parseInt(c[7],10), rxQueue: parseInt((c[4]||'').split(':')[1]||'0',16),
+                   drops: parseInt(c[12]||'0',10)||0, v6: path.endsWith('6') });
+      }
+    } catch (e) { out.push({ error: `${path}: ${e.message}` }); }
+  }
+  return out;
+}
+
+function scanListen(cb) {
+  const rows = [];
+  let pending = SCAN_PORTS.length;
+  const done = () => { if (--pending === 0) cb(rows.sort((a,b)=>(b.packets||0)-(a.packets||0))); };
+  for (const port of SCAN_PORTS) {
+    const row = { port, bound:false, packets:0, bytes:0, sources:[], mavlink:false, sysIds:[], msgIds:[] };
+    const sysIds = new Set(), msgIds = new Set(), sources = new Set();
+    const s = dgram.createSocket({ type:'udp4', reuseAddr:true });
+    let finished = false;
+    const finish = () => {
+      if (finished) return; finished = true;
+      row.sources=[...sources]; row.sysIds=[...sysIds]; row.msgIds=[...msgIds];
+      row.mavlink = msgIds.size > 0;
+      try { s.close(); } catch(e) {}
+      rows.push(row); done();
+    };
+    s.on('error', e => { row.error = e.message; finish(); });
+    s.on('message', (msg, ri) => {
+      row.packets++; row.bytes += msg.length;
+      sources.add(`${ri.address}:${ri.port}`);
+      scanDecode(msg, sysIds, msgIds);
+    });
+    s.bind(port, () => {
+      row.bound = true;
+      try { s.setBroadcast(true); } catch(e) {}
+      setTimeout(finish, SCAN_MS);
+    });
+  }
+}
+
+app.get('/api/mavscan', (req, res) => {
+  console.log('[SCAN] listening on', SCAN_PORTS.join(', '), `for ${SCAN_MS}ms`);
+  scanListen(listened => {
+    res.json({
+      platform: 'node',
+      listenMs: SCAN_MS,
+      multicastLock: false,               // Android-only concept
+      interfaces: scanInterfaces(),
+      openUdpPorts: scanProcNetUdp(),
+      listened,
+      appMavlinkPort: CONFIG.mavlinkPort,
+    });
+  });
+});
+
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.
 const ALLOWED_MODES = { BRAKE:17, LOITER:5, RTL:6 };
 app.post('/api/mode', (req, res) => {

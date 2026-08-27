@@ -94,6 +94,33 @@ does not drop telemetry. Clearing a URL restores the compiled-in default;
 **RESTORE DEFAULTS** clears all of them. `Config.kt` holds the defaults, and
 nothing here touches the ballistics or the aim solution.
 
+## Finding MAVLink on an unfamiliar ground station
+
+**⚙ CONNECTION → ◎ MAVLINK SCAN** answers "which port is the telemetry on?"
+without a rebuild per guess. It is **read-only** — it opens its own sockets,
+looks, and closes them; the live telemetry path is untouched.
+
+It reports three things:
+
+1. **This device's addresses** — whether it is on the datalink's subnet at all.
+2. **Every UDP port open on the device**, from `/proc/net/udp`, with the owning
+   uid. The port another app is listening on is visible here without guessing.
+3. **What actually arrives** on ~11 common MAVLink ports, listened to
+   simultaneously for 6 s, with the source address and any decoded MAVLink
+   system and message ids.
+
+**A silent result is not proof of absence.** On Linux a *unicast* datagram goes
+to exactly one socket even when both set `SO_REUSEADDR`, so telemetry addressed
+to another app's socket is invisible to (3). Broadcast and multicast reach every
+bound socket and do show up. That is why (2) matters as much as (3): if nothing
+is heard but a foreign app holds a plausible port, the transport is unicast and
+the fix is a forwarding change, not a port change.
+
+The scan holds a `MulticastLock` while it runs — Android drops broadcast and
+multicast on Wi-Fi without one, which would hide a datalink that broadcasts to
+`x.x.x.255`. That is what `ACCESS_WIFI_STATE` and `CHANGE_WIFI_MULTICAST_STATE`
+in the manifest are for; neither prompts the user.
+
 ## Browser JS must parse as ES2017
 
 The ground stations run old Android with a stock System WebView — the SIYI

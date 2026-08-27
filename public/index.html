@@ -333,6 +333,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <button class="btn" id="setReset">↺ RESTORE DEFAULTS</button>
       <div id="setNote" style="font-size:9px;color:var(--mt);line-height:1.4"></div>
     </div>
+    <button class="btn btn-gd" id="scanBtn">◎ MAVLINK SCAN — FIND TELEMETRY</button>
+    <div id="scanOut" style="display:none;font-size:9px;line-height:1.45;background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:6px 8px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all"></div>
   </div></div>
 </div>
 </div>
@@ -1106,6 +1108,83 @@ E('setSave').addEventListener('click', ()=>{
 });
 
 E('setReset').addEventListener('click', ()=>postSettings({reset:true}, 'Restoring defaults…'));
+
+// ── MAVLINK SCAN ──────────────────────────────────────────────────
+// Read-only. Listens on every common MAVLink port at once and reports what the
+// device can actually hear, plus every UDP port already open on it. Written for
+// the SIYI ground station, whose own app decodes MAVLink but exposes no setting
+// naming the port it uses — one guess per rebuild is not a method.
+E('scanBtn').addEventListener('click', async ()=>{
+  const btn=E('scanBtn'), out=E('scanOut');
+  btn.disabled=true; btn.textContent='◎ SCANNING — KEEP THE AIRCRAFT POWERED…';
+  out.style.display=''; out.textContent='Listening on every candidate port…';
+  let d;
+  try { d = await fetch('/api/mavscan').then(r=>r.json()); }
+  catch(e){
+    out.textContent='Scan failed: '+e.message+'\nIf this build has no scan endpoint, reinstall the current APK.';
+    btn.disabled=false; btn.textContent='◎ MAVLINK SCAN — FIND TELEMETRY'; return;
+  }
+  out.textContent = renderScan(d);
+  btn.disabled=false; btn.textContent='◎ SCAN AGAIN';
+});
+
+function renderScan(d){
+  const L=[];
+  const heard=(d.listened||[]).filter(p=>p.packets>0);
+  const mav=heard.filter(p=>p.mavlink);
+
+  // The answer first; the evidence under it.
+  if(mav.length){
+    L.push('✓ MAVLINK FOUND on port '+mav.map(p=>p.port).join(', '));
+    L.push('  Set the MAVLink listen port above to '+mav[0].port+' and save.');
+  } else if(heard.length){
+    L.push('~ Traffic but no MAVLink on: '+heard.map(p=>p.port).join(', '));
+  } else {
+    L.push('✕ Nothing heard on any candidate port.');
+    L.push('  Note: a unicast stream aimed at another app is invisible here —');
+    L.push('  check OPEN UDP PORTS below for the port that app is holding.');
+  }
+  L.push('');
+  L.push('THIS DEVICE');
+  (d.interfaces||[]).forEach(i=>L.push('  '+i.name+'  '+(i.addresses||[]).join(', ')));
+  if(!(d.interfaces||[]).length) L.push('  (no non-loopback address — not on the datalink network)');
+  L.push('  app is listening on '+d.appMavlinkPort+(d.multicastLock?'   multicast lock: held':''));
+
+  L.push('');
+  L.push('OPEN UDP PORTS (every app on this device)');
+  const ports=(d.openUdpPorts||[]).filter(p=>!p.error);
+  const err=(d.openUdpPorts||[]).filter(p=>p.error);
+  if(ports.length){
+    // Deduplicate: the same port bound on v4 and v6 is one listener, not two.
+    const seen={};
+    ports.forEach(p=>{ const k=p.port+'@'+p.addr; if(!seen[k]) seen[k]=p; });
+    Object.keys(seen).map(k=>seen[k]).sort((a,b)=>a.port-b.port).forEach(p=>{
+      L.push('  '+String(p.port).padEnd(6)+p.addr.padEnd(16)+'uid '+p.uid+
+             (p.rxQueue?'  rx queued '+p.rxQueue:''));
+    });
+  }
+  err.forEach(e=>L.push('  '+e.error));
+  if(!ports.length && !err.length) L.push('  (none readable)');
+
+  L.push('');
+  L.push('LISTENED '+(d.listenMs/1000)+'s');
+  (d.listened||[]).forEach(p=>{
+    if(p.error){
+      // The app's own listener already holds its port. That is not a fault, and
+      // it is not a blind spot either: if telemetry were arriving there the
+      // MAVLINK pill would already be green.
+      L.push('  '+String(p.port).padEnd(6)+(p.port===d.appMavlinkPort
+        ? 'held by this app — already being listened on'
+        : 'could not bind: '+p.error));
+      return;
+    }
+    L.push('  '+String(p.port).padEnd(6)+String(p.packets).padStart(4)+' pkts '+
+           String(p.bytes).padStart(7)+' B'+
+           (p.sources&&p.sources.length?'  from '+p.sources.join(', '):'')+
+           (p.mavlink?'  MAVLINK sys '+(p.sysIds||[]).join(',')+' msg '+(p.msgIds||[]).join(','):''));
+  });
+  return L.join('\n');
+}
 
 // ══════════════════════════════════════════════════════════════════
 // POSITION LOCK (BRAKE) / UNLOCK (LOITER)

@@ -68,6 +68,9 @@ class WebServer(
                 uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
                 uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
                 uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
+                // Read-only: opens its own sockets, looks, closes them. Does not
+                // touch the live telemetry path.
+                uri == "/api/mavscan" -> json(MavScan.run(ctx).put("platform", "android").toString())
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
         } catch (e: Exception) {
