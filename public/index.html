@@ -18,10 +18,18 @@
 html,body{width:100%;height:100%;background:var(--bg);color:var(--tx);font-family:'Share Tech Mono',monospace;font-size:13px;overflow:hidden}
 body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
 
-/* Layout: video left, sidebar right */
-.layout{display:grid;grid-template-columns:1fr 320px;height:100vh;overflow:hidden}
-@media(max-width:900px){.layout{grid-template-columns:1fr 260px}}
-@media(max-width:600px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 200px}}
+/* Layout: video left, controls right — at EVERY width.
+   This used to stack into video-on-top / controls-below under 600px. That put
+   the operator's controls somewhere different depending on the device, and cut
+   the feed down to a strip exactly on the screens where it was already
+   tightest. The panel now SCALES and the layout never changes shape, so the
+   app is laid out identically on a small controller and a 1080p ground
+   station — muscle memory carries across both.
+   clamp: never narrower than 170px (a slider stops being usable below that),
+   never wider than the 320px the panel was designed at, ~26vw in between. */
+.layout{display:grid;grid-template-columns:1fr clamp(170px,26vw,320px);height:100vh;overflow:hidden}
+/* The narrow-screen tuning lives at the END of this stylesheet — it overrides
+   rules declared further down, and at equal specificity the later one wins. */
 
 /* Video pane */
 .vpane{position:relative;background:#000;overflow:hidden}
@@ -40,7 +48,9 @@ canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:cr
 .hud .lbl{color:var(--mt)}.hud .val{color:var(--ac)}.hud .vgn{color:var(--gn)}.hud .vgd{color:var(--gd)}
 
 /* Status bar */
-.sbar{display:flex;gap:6px;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
+/* wrap: the link pills are the one thing that must never be clipped — a VIDEO
+   or MAVLINK pill half off the edge is the same as not having it. */
+.sbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
 .pill{padding:2px 7px;border:1px solid;font-size:9px;border-radius:1px}
 .pill.ok{border-color:var(--gn);color:var(--gn)}.pill.bad{border-color:var(--rd);color:var(--rd);animation:blink 1s step-end infinite}
 .pill.warn{border-color:var(--gd);color:var(--gd)}
@@ -87,6 +97,28 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
 /* Horizon */
 #hzCanvas{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none}
+
+/* ── Narrow screens ───────────────────────────────────────────────
+   Last in the file on purpose: these override rules declared above, and at
+   equal specificity the later declaration wins.
+   Below ~650px the control panel is already pinned at its 170px floor, so
+   what gives way here is padding and density — never the side-by-side
+   layout. The video pane is narrow at these widths, so the corner HUD
+   readouts are shrunk too, otherwise the left and right blocks collide over
+   the middle of the picture. */
+@media(max-width:700px){
+  .sh{padding:5px 7px;letter-spacing:1px}
+  .sb{padding:6px 7px;gap:5px}
+  .sbar{padding:5px 7px}
+  .tg{grid-template-columns:1fr}      /* two columns cannot fit 170px */
+  .tc{padding:3px 6px}
+  .tc .tv{font-size:12px}
+  .hud{font-size:9px;letter-spacing:0}
+  .hud.tl,.hud.tr{top:6px}
+  .hud.tl{left:6px}.hud.tr{right:6px}
+  .hud.bl{left:6px;bottom:6px}.hud.br{right:6px;bottom:6px}
+  .btn{padding:7px;font-size:9px;letter-spacing:1px}
+}
 </style>
 </head>
 <body>
