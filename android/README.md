@@ -94,6 +94,35 @@ does not drop telemetry. Clearing a URL restores the compiled-in default;
 **RESTORE DEFAULTS** clears all of them. `Config.kt` holds the defaults, and
 nothing here touches the ballistics or the aim solution.
 
+## Browser JS must parse as ES2017
+
+The ground stations run old Android with a stock System WebView — the SIYI
+handheld is Android 9, whose WebView is around Chrome 66 and is never updated.
+**Everything in `../public` must parse as ES2017 (Chrome/WebView 58).**
+
+This is not a style preference. A syntax error does not break one feature; it
+takes the whole `<script>` block out at parse time, so every handler in it
+silently stops existing. Two optional chains (`?.`, Chrome 80+) once made the
+settings button, the target marking, the HUD, the link pills and the training
+simulator all dead on the SIYI GCS at once, while the identical file worked in
+desktop Chrome and in every headless test.
+
+Run `npm run check` (or `node ../tools/js-compat-check.js`) before shipping a
+web change; it lists the offending line and its replacement. Common ones:
+
+| Don't | Do |
+|---|---|
+| `a?.b` | `a && a.b` |
+| `a ?? b` | `(a === null \|\| a === undefined) ? b : a` |
+| `{...x, ...y}` | `Object.assign({}, x, y)` |
+| `a \|\|= b` | `a = a \|\| b` |
+
+`public/index.html` also opens with a small ES5-only error trap that prints any
+script error across the bottom of the screen. A ground station has no logcat, so
+without it a failure like the above just looks like "some buttons don't work".
+Keep it first in the document and keep it ES5 — if it cannot parse, nothing can
+report that it could not.
+
 ## Typechecking without an Android SDK
 
 `../tools/kotlin-typecheck.sh` compiles every Kotlin source in the app in about a

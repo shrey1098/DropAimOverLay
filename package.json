@@ -4,8 +4,9 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node tools/js-compat-check.js",
+    "test": "node tools/js-compat-check.js"
   },
   "keywords": [],
   "author": "",
@@ -14,5 +15,8 @@
   "dependencies":{
     "express": "^4.19.2",
     "ws": "^8.18.0"
+  },
+  "devDependencies":{
+    "acorn": "^8.12.0"
   }
 }

@@ -122,6 +122,50 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 </style>
 </head>
 <body>
+<!-- FIRST script in the document, and deliberately written in old-school ES5.
+     A syntax error in a later <script> takes that entire block out at parse
+     time: every handler in it silently never attaches. In the field that looks
+     like "the settings button does nothing and the simulator won't draw", with
+     no hint that the cause is one unsupported character. There is no logcat on
+     a ground station, so the app has to say so itself.
+     window.onerror fires for parse errors in scripts loaded AFTER the handler
+     is installed, which is the whole reason this sits at the top. Keep it ES5:
+     if this block cannot parse, nothing can report that it could not. -->
+<script>
+(function(){
+  var box=null;
+  function show(msg){
+    if(!box){
+      box=document.createElement('div');
+      box.setAttribute('style','position:fixed;left:0;right:0;bottom:0;z-index:99999;'+
+        'max-height:45%;overflow:auto;background:rgba(40,0,6,.96);border-top:2px solid #ff3b55;'+
+        'color:#ffb3bf;font:11px/1.5 monospace;padding:8px 10px;white-space:pre-wrap');
+      var btn=document.createElement('div');
+      btn.textContent='✕ DISMISS';
+      btn.setAttribute('style','float:right;color:#ff3b55;border:1px solid #ff3b55;padding:2px 8px');
+      btn.onclick=function(){ box.style.display='none'; };
+      box.appendChild(btn);
+      var ttl=document.createElement('div');
+      ttl.textContent='INTERFACE SCRIPT ERROR — the app is not fully working. Report this text.';
+      ttl.setAttribute('style','color:#ff3b55;letter-spacing:1px;margin-bottom:5px');
+      box.appendChild(ttl);
+      (document.body||document.documentElement).appendChild(box);
+    }
+    var row=document.createElement('div');
+    row.textContent=msg;
+    box.appendChild(row);
+  }
+  window.onerror=function(msg,src,line,col){
+    show(msg+'  ['+String(src).split('/').pop()+':'+line+':'+col+']');
+    return false;               // let it reach the console too
+  };
+  window.addEventListener('unhandledrejection',function(e){
+    var r=e.reason;
+    show('unhandled promise: '+((r&&r.message)?r.message:String(r)));
+  });
+  window.__uiError=show;
+})();
+</script>
 <div class="layout">
 
 <!-- ══ VIDEO PANE ══ -->
@@ -977,8 +1021,14 @@ setInterval(loadCameras, 5000);
 let settings = null;
 
 async function loadSettings(){
-  try { settings = await fetch('/api/settings').then(r=>r.json()); }
-  catch(e){ setMsg('Local server not reachable.', false); return false; }
+  try {
+    const r = await fetch('/api/settings');
+    // An older APK serves the UI but not this endpoint. Say that, rather than
+    // letting r.json() throw and reporting it as a network fault.
+    if(!r.ok) throw new Error('server answered '+r.status+' — this build of the app is older than its interface');
+    settings = await r.json();
+  }
+  catch(e){ setMsg('Could not read settings: '+e.message, false); return false; }
   paintSettings();
   return true;
 }
@@ -1033,14 +1083,14 @@ async function postSettings(body, working){
 
 E('setBtn').addEventListener('click', async ()=>{
   const rows=E('setRows'), open = rows.style.display==='none';
-  if(open){
-    // Load on open, never on a timer: repainting the fields under the operator
-    // would wipe what they were part-way through typing.
-    if(!await loadSettings()) return;
-    E('setMsg').style.display='none';
-  }
+  // Open FIRST, then load. The failure message lives inside this panel, so
+  // bailing out before showing it left the operator with a button that did
+  // nothing and gave no reason — which is exactly how it failed in the field.
   rows.style.display = open ? 'flex' : 'none';
   E('setBtn').textContent = open ? '⚙ SETTINGS — CLOSE' : '⚙ SETTINGS — PORTS & CAMERA URLS';
+  // Load on open, never on a timer: repainting the fields under the operator
+  // would wipe whatever they were part-way through typing.
+  if(open){ E('setMsg').style.display='none'; await loadSettings(); }
 });
 
 E('setSave').addEventListener('click', ()=>{
@@ -1109,7 +1159,9 @@ function connectTelem(){
     if(window.SIM && SIM.on) return;   // simulator drives telemetry in training mode
     try{
       const d=JSON.parse(e.data);
-      telemetry={...telemetry,...d};
+      // Object.assign, not object spread: this file has to parse on the oldest
+      // WebView we ship to. See the ES2017 note at the top of the script.
+      telemetry=Object.assign({},telemetry,d);
     }catch(err){ console.error('[TELEM] bad frame', err); return; }
     // Each of these is isolated: a throw in the HUD must never stop the link
     // pills from updating, and neither may stop the aim solution. A single
@@ -1133,7 +1185,7 @@ E('fetchW').addEventListener('click', async()=>{
   const q=V('wLoc').trim(); if(!q) return;
   try{
     const geo=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&format=json`).then(r=>r.json());
-    if(!geo.results?.length) return;
+    if(!geo.results || !geo.results.length) return;
     const{latitude:lat,longitude:lon,name}=geo.results[0];
     const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&forecast_days=1`).then(r=>r.json());
     const s=w.current.wind_speed_10m, d=Math.round(w.current.wind_direction_10m);
@@ -1233,7 +1285,10 @@ function updateHUD(){
   E('tRoll').textContent=f(telemetry.roll)+'°';
   E('tPitch').textContent=f(telemetry.pitch)+'°';
   E('tYaw').textContent=f(telemetry.heading)+'°';
-  E('tWind').textContent=telemetry.windSpeed!==null?telemetry.windSpeed.toFixed(1)+' m/s '+telemetry.windDir?.toFixed(0)+'°':'N/A';
+  // Direction is dropped when the FC does not report one, rather than printed
+  // as "undefined°" — which is what the optional chain here used to render.
+  const wd=(telemetry.windDir===null||telemetry.windDir===undefined)?'':' '+telemetry.windDir.toFixed(0)+'°';
+  E('tWind').textContent=telemetry.windSpeed!==null?telemetry.windSpeed.toFixed(1)+' m/s'+wd:'N/A';
   E('sTime').textContent=new Date().toLocaleTimeString();
   // Flight-mode readout + LOCKED highlight when the FC reports BRAKE
   const md=telemetry.mode||'—', locked=md==='BRAKE';
