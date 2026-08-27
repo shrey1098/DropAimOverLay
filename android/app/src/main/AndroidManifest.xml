@@ -8,6 +8,14 @@
          broadcasts telemetry to x.x.x.255. Neither permission prompts the user. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Telemetry on some ground stations does not use IP at all: the SIYI
+         handheld hands MAVLink to Android over a Bluetooth serial (SPP) link at
+         57600, which is why no UDP port ever carried it. Install-time
+         permissions through Android 11; BLUETOOTH_CONNECT is runtime on 12+ and
+         the code degrades gracefully without it. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 

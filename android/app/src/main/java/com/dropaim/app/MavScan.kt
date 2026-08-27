@@ -64,6 +64,7 @@ object MavScan {
                 .put("listenMs", LISTEN_MS)
                 .put("multicastLock", lock?.isHeld == true)
                 .put("interfaces", interfaces())
+                .put("bluetooth", bluetooth())
                 .put("sockets", procNet())
                 .put("listened", listen())
                 .put("appMavlinkPort", Settings.mavlinkPort)
@@ -85,6 +86,47 @@ object MavScan {
                     .put("addresses", JSONArray(addrs)))
             }
         } catch (e: Exception) { Log.w(TAG, "interfaces: ${e.message}") }
+        return out
+    }
+
+    /**
+     * Paired Bluetooth devices, and whether any of them offers a serial port.
+     *
+     * Not every ground station puts telemetry on IP. UniGCS on the SIYI handheld
+     * shows full MAVLink with its Datalink set to "Bluetooth" at 57600, which is
+     * a Bluetooth serial (SPP, RFCOMM) link — invisible to every socket and port
+     * this scan was originally built around. A paired device advertising the SPP
+     * UUID is where the telemetry is on such a machine.
+     *
+     * Read-only: enumerates what is already paired. It pairs nothing, connects
+     * to nothing and sends nothing.
+     */
+    private fun bluetooth(): JSONObject {
+        val out = JSONObject()
+        try {
+            val adapter = android.bluetooth.BluetoothAdapter.getDefaultAdapter()
+            if (adapter == null) { return out.put("available", false).put("why", "no Bluetooth on this device") }
+            out.put("available", true).put("enabled", adapter.isEnabled)
+            val arr = JSONArray()
+            for (dev in adapter.bondedDevices.orEmpty()) {
+                // SPP: 00001101-… is the serial port profile every telemetry
+                // bridge of this kind advertises.
+                val uuids = dev.uuids?.map { it.uuid.toString() } ?: emptyList()
+                arr.put(JSONObject()
+                    .put("name", dev.name ?: "(unnamed)")
+                    .put("address", dev.address)
+                    .put("type", dev.type)
+                    .put("spp", uuids.any { it.startsWith("00001101", true) })
+                    .put("uuids", JSONArray(uuids)))
+            }
+            out.put("paired", arr)
+        } catch (e: SecurityException) {
+            // Android 12+ needs BLUETOOTH_CONNECT granted at runtime. The field
+            // devices are Android 9, where it is granted at install.
+            out.put("available", true).put("error", "permission not granted: ${e.message}")
+        } catch (e: Exception) {
+            out.put("available", false).put("error", e.message ?: e.javaClass.simpleName)
+        }
         return out
     }
 

@@ -1176,11 +1176,19 @@ function renderScan(d){
   const onMyNet=a=>!!a && subnets.some(s=>a.indexOf(s+'.')===0) && mine.indexOf(a)<0;
 
   // ── the answer, then the evidence ──
+  const btSpp=((d.bluetooth&&d.bluetooth.paired)||[]).filter(p=>p.spp);
   if(mav.length){
     L.push('✓ MAVLINK FOUND on port '+mav.map(p=>p.port).join(', '));
     L.push('  Set the MAVLink listen port above to '+mav[0].port+' and save.');
   } else if(heard.length){
     L.push('~ Traffic but no MAVLink on: '+heard.map(p=>p.port).join(', '));
+  } else if(btSpp.length){
+    // Silence on every port plus a paired serial device is not an inconclusive
+    // result — it is the answer.
+    L.push('✕ No MAVLink on any IP port, but a Bluetooth SERIAL device is paired:');
+    btSpp.forEach(p=>L.push('    '+p.address+'  '+p.name));
+    L.push('  On this ground station telemetry is almost certainly on that link,');
+    L.push('  not on the network. No port setting can reach it.');
   } else {
     L.push('✕ Nothing broadcast on any of the '+(d.listened||[]).length+' candidate ports.');
   }
@@ -1191,6 +1199,25 @@ function renderScan(d){
   if(!(d.interfaces||[]).length) L.push('  (no address — not on the datalink network)');
   L.push('  this app: uid '+d.myUid+', listening on '+d.appMavlinkPort+
          (d.multicastLock?', multicast lock held':''));
+
+  // ── Bluetooth ──
+  // Some ground stations put MAVLink on a Bluetooth serial link, not on IP.
+  // Then no port, no forwarding and no multicast lock can ever help, and this
+  // is the only section that says so.
+  const bt=d.bluetooth;
+  if(bt){
+    L.push('');
+    L.push('BLUETOOTH');
+    if(!bt.available){ L.push('  none ('+(bt.why||bt.error||'unavailable')+')'); }
+    else if(bt.error){ L.push('  '+bt.error); }
+    else {
+      L.push('  adapter '+(bt.enabled?'on':'OFF'));
+      const paired=bt.paired||[];
+      if(!paired.length) L.push('  no paired devices');
+      paired.forEach(p=>L.push('  '+(p.spp?'SPP  ':'     ')+p.address+'  '+p.name+
+                               (p.spp?'   ← serial port, can carry MAVLink':'')));
+    }
+  }
 
   // ── the decisive section ──
   // A socket is only half described by its local address. A far end on the
