@@ -334,6 +334,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <div id="setNote" style="font-size:9px;color:var(--mt);line-height:1.4"></div>
     </div>
     <button class="btn btn-gd" id="scanBtn">◎ MAVLINK SCAN — FIND TELEMETRY</button>
+    <button class="btn btn-rd" id="probeBtn">▲ ACTIVE PROBE — SENDS A GCS HEARTBEAT</button>
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Scan only listens. Probe transmits one standard GCS heartbeat to the datalink — the same message QGroundControl sends every second. It commands nothing and changes no mode.</div>
     <div id="scanOut" style="display:none;font-size:9px;line-height:1.45;background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:6px 8px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all"></div>
   </div></div>
 </div>
@@ -1128,60 +1130,153 @@ E('scanBtn').addEventListener('click', async ()=>{
   btn.disabled=false; btn.textContent='◎ SCAN AGAIN';
 });
 
+E('probeBtn').addEventListener('click', async ()=>{
+  const btn=E('probeBtn'), out=E('scanOut');
+  btn.disabled=true; btn.textContent='▲ PROBING — SENDING HEARTBEATS…';
+  out.style.display=''; out.textContent='Introducing ourselves to the datalink…';
+  let d;
+  try { d = await fetch('/api/mavprobe').then(r=>r.json()); }
+  catch(e){
+    out.textContent='Probe failed: '+e.message;
+    btn.disabled=false; btn.textContent='▲ ACTIVE PROBE — SENDS A GCS HEARTBEAT'; return;
+  }
+  out.textContent = renderProbe(d);
+  btn.disabled=false; btn.textContent='▲ PROBE AGAIN';
+});
+
+// Android system uids. Anything below 10000 is part of the OS, not an app —
+// naming them is what stopped 80 rows of DNS and radio sockets looking like
+// candidates for the telemetry path.
+const SYS_UID={0:'root',1000:'system',1001:'radio',1002:'bluetooth',1010:'wifi',
+               1013:'media',1019:'drm',1020:'mDNS',1021:'gps',1051:'DNS',1053:'webview'};
+function uidName(u){ return u>=10000 ? 'app uid '+u : (SYS_UID[u]||('system uid '+u)); }
+
+/** Collapse 50013,50014,…,50061 into "50013-50061 (35)". */
+function runs(nums){
+  const s=[...new Set(nums)].sort((a,b)=>a-b), out=[];
+  let i=0;
+  while(i<s.length){
+    let j=i; while(j+1<s.length && s[j+1]===s[j]+1) j++;
+    out.push(j-i>=2 ? s[i]+'-'+s[j]+' ('+(j-i+1)+')' : s.slice(i,j+1).join(', '));
+    i=j+1;
+  }
+  return out.join(', ');
+}
+
 function renderScan(d){
   const L=[];
   const heard=(d.listened||[]).filter(p=>p.packets>0);
   const mav=heard.filter(p=>p.mavlink);
+  const socks=(d.sockets||[]).filter(s=>!s.error);
+  const errs=(d.sockets||[]).filter(s=>s.error);
 
-  // The answer first; the evidence under it.
+  // My own addresses, so a socket's far end can be judged against my subnet.
+  const mine=[]; (d.interfaces||[]).forEach(i=>(i.addresses||[]).forEach(a=>mine.push(a)));
+  const subnets=mine.map(a=>a.split('.').slice(0,3).join('.'));
+  const onMyNet=a=>!!a && subnets.some(s=>a.indexOf(s+'.')===0) && mine.indexOf(a)<0;
+
+  // ── the answer, then the evidence ──
   if(mav.length){
     L.push('✓ MAVLINK FOUND on port '+mav.map(p=>p.port).join(', '));
     L.push('  Set the MAVLink listen port above to '+mav[0].port+' and save.');
   } else if(heard.length){
     L.push('~ Traffic but no MAVLink on: '+heard.map(p=>p.port).join(', '));
   } else {
-    L.push('✕ Nothing heard on any candidate port.');
-    L.push('  Note: a unicast stream aimed at another app is invisible here —');
-    L.push('  check OPEN UDP PORTS below for the port that app is holding.');
+    L.push('✕ Nothing broadcast on any of the '+(d.listened||[]).length+' candidate ports.');
   }
+
   L.push('');
   L.push('THIS DEVICE');
   (d.interfaces||[]).forEach(i=>L.push('  '+i.name+'  '+(i.addresses||[]).join(', ')));
-  if(!(d.interfaces||[]).length) L.push('  (no non-loopback address — not on the datalink network)');
-  L.push('  app is listening on '+d.appMavlinkPort+(d.multicastLock?'   multicast lock: held':''));
+  if(!(d.interfaces||[]).length) L.push('  (no address — not on the datalink network)');
+  L.push('  this app: uid '+d.myUid+', listening on '+d.appMavlinkPort+
+         (d.multicastLock?', multicast lock held':''));
 
+  // ── the decisive section ──
+  // A socket is only half described by its local address. A far end on the
+  // datalink's subnet names the telemetry path, whoever owns it.
   L.push('');
-  L.push('OPEN UDP PORTS (every app on this device)');
-  const ports=(d.openUdpPorts||[]).filter(p=>!p.error);
-  const err=(d.openUdpPorts||[]).filter(p=>p.error);
-  if(ports.length){
-    // Deduplicate: the same port bound on v4 and v6 is one listener, not two.
-    const seen={};
-    ports.forEach(p=>{ const k=p.port+'@'+p.addr; if(!seen[k]) seen[k]=p; });
-    Object.keys(seen).map(k=>seen[k]).sort((a,b)=>a.port-b.port).forEach(p=>{
-      L.push('  '+String(p.port).padEnd(6)+p.addr.padEnd(16)+'uid '+p.uid+
-             (p.rxQueue?'  rx queued '+p.rxQueue:''));
+  L.push('SOCKETS TALKING TO MY SUBNET  ← the telemetry path, if it exists');
+  const far=socks.filter(s=>onMyNet(s.remoteAddr));
+  if(far.length){
+    far.sort((a,b)=>a.remotePort-b.remotePort).forEach(s=>{
+      L.push('  '+s.proto.padEnd(5)+s.localPort+' → '+s.remoteAddr+':'+s.remotePort+
+             '   '+uidName(s.uid));
     });
+  } else {
+    L.push('  (none — nothing on this device holds a connection to the datalink)');
   }
-  err.forEach(e=>L.push('  '+e.error));
-  if(!ports.length && !err.length) L.push('  (none readable)');
+
+  // ── app sockets, listening ──
+  L.push('');
+  L.push('APP-OWNED SOCKETS (uid ≥ 10000)');
+  const app=socks.filter(s=>s.uid>=10000);
+  if(app.length){
+    app.sort((a,b)=>a.localPort-b.localPort).forEach(s=>{
+      L.push('  '+s.proto.padEnd(5)+String(s.localPort).padEnd(6)+s.localAddr+
+             (s.remotePort?' → '+s.remoteAddr+':'+s.remotePort:' (listening)')+
+             '   uid '+s.uid+(s.uid===d.myUid?'  ← this app':''));
+    });
+  } else {
+    L.push('  (none — no installed app holds a socket. The datalink app, if any,');
+    L.push('   runs as a system service or does not use IP at all.)');
+  }
+
+  // ── system noise, collapsed ──
+  L.push('');
+  L.push('SYSTEM SOCKETS (collapsed)');
+  const byUid={};
+  socks.filter(s=>s.uid<10000).forEach(s=>{ (byUid[s.uid]=byUid[s.uid]||[]).push(s.localPort); });
+  Object.keys(byUid).sort((a,b)=>a-b).forEach(u=>{
+    L.push('  '+uidName(+u).padEnd(16)+runs(byUid[u]));
+  });
+  errs.forEach(e=>L.push('  '+e.error));
 
   L.push('');
   L.push('LISTENED '+(d.listenMs/1000)+'s');
+  const silent=[];
   (d.listened||[]).forEach(p=>{
     if(p.error){
-      // The app's own listener already holds its port. That is not a fault, and
-      // it is not a blind spot either: if telemetry were arriving there the
-      // MAVLINK pill would already be green.
       L.push('  '+String(p.port).padEnd(6)+(p.port===d.appMavlinkPort
         ? 'held by this app — already being listened on'
         : 'could not bind: '+p.error));
       return;
     }
+    // One line per port that heard something; the silent ones as a single row,
+    // because eleven "0 pkts" lines pushed everything useful off the screen.
+    if(!p.packets){ silent.push(p.port); return; }
     L.push('  '+String(p.port).padEnd(6)+String(p.packets).padStart(4)+' pkts '+
            String(p.bytes).padStart(7)+' B'+
            (p.sources&&p.sources.length?'  from '+p.sources.join(', '):'')+
            (p.mavlink?'  MAVLINK sys '+(p.sysIds||[]).join(',')+' msg '+(p.msgIds||[]).join(','):''));
+  });
+  if(silent.length) L.push('  silent: '+silent.sort((a,b)=>a-b).join(', '));
+  return L.join('\n');
+}
+
+function renderProbe(d){
+  const L=[];
+  const rows=d.probed||[];
+  const answered=rows.filter(p=>p.replies>0);
+  const mav=answered.filter(p=>p.mavlink);
+  if(mav.length){
+    const w=mav[0];
+    L.push('✓ '+w.host+':'+w.port+' ANSWERED WITH MAVLINK');
+    L.push('  It is a server: it stays silent until spoken to. The app needs to');
+    L.push('  send first — tell me and I will add that connect-out mode.');
+  } else if(answered.length){
+    L.push('~ Replies but no MAVLink from: '+answered.map(p=>p.host+':'+p.port).join(', '));
+  } else {
+    L.push('✕ No endpoint answered a GCS heartbeat.');
+  }
+  L.push('');
+  L.push('PROBED (heartbeat sent, waited '+(d.waitMs/1000)+'s each)');
+  rows.forEach(p=>{
+    L.push('  '+(p.host+':'+p.port).padEnd(24)+
+           (p.error ? 'error: '+p.error
+                    : String(p.replies).padStart(3)+' replies'+
+                      (p.sources&&p.sources.length?'  from '+p.sources.join(', '):'')+
+                      (p.mavlink?'  MAVLINK sys '+(p.sysIds||[]).join(','):'')));
   });
   return L.join('\n');
 }

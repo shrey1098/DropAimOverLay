@@ -311,25 +311,44 @@ function scanInterfaces() {
   return out;
 }
 
-/** Every bound UDP socket on this machine. Linux only; the field build is
- *  Android, and on the bench this is the same file. */
-function scanProcNetUdp() {
+/** Hex address -> dotted quad, or a readable IPv6. */
+function scanIp(hex) {
+  try {
+    if (hex.length === 8) return [3,2,1,0].map(k => parseInt(hex.substr(k*2,2),16)).join('.');
+    if (hex.length === 32) {
+      if (/^0000000000000000FFFF0000/i.test(hex)) return scanIp(hex.slice(24));
+      if (/^0+$/.test(hex)) return '::';
+      const parts = [];
+      for (let w = 0; w < 4; w++) {
+        const word = hex.substr(w*8, 8);
+        let be = ''; for (let k = 3; k >= 0; k--) be += word.substr(k*2, 2);
+        parts.push((be.slice(0,4).replace(/^0+/,'') || '0') + ':' + (be.slice(4,8).replace(/^0+/,'') || '0'));
+      }
+      return parts.join(':');
+    }
+  } catch (e) {}
+  return hex;
+}
+
+/** Every socket on this machine, UDP and TCP, with the REMOTE end kept — a far
+ *  end on the datalink's subnet is what identifies the telemetry path. */
+function scanProcNet() {
   const out = [];
-  for (const path of ['/proc/net/udp', '/proc/net/udp6']) {
+  const files = [['/proc/net/udp','UDP'],['/proc/net/udp6','UDP6'],
+                 ['/proc/net/tcp','TCP'],['/proc/net/tcp6','TCP6']];
+  for (const [path, proto] of files) {
     try {
       const lines = require('fs').readFileSync(path, 'utf8').split('\n').slice(1);
       for (const line of lines) {
         const c = line.trim().split(/\s+/);
         if (c.length < 8) continue;
-        const local = c[1].split(':');
-        if (local.length !== 2) continue;
-        const port = parseInt(local[1], 16);
-        if (!Number.isFinite(port)) continue;
-        const hex = local[0];
-        const addr = hex.length === 8
-          ? [3,2,1,0].map(k => parseInt(hex.substr(k*2,2),16)).join('.') : hex;
-        out.push({ port, addr, uid: parseInt(c[7],10), rxQueue: parseInt((c[4]||'').split(':')[1]||'0',16),
-                   drops: parseInt(c[12]||'0',10)||0, v6: path.endsWith('6') });
+        const lp = c[1].split(':'), rp = c[2].split(':');
+        if (lp.length !== 2 || rp.length !== 2) continue;
+        const localPort = parseInt(lp[1], 16), remotePort = parseInt(rp[1], 16);
+        if (!Number.isFinite(localPort)) continue;
+        out.push({ proto, localAddr: scanIp(lp[0]), localPort,
+                   remoteAddr: remotePort ? scanIp(rp[0]) : '', remotePort: remotePort || 0,
+                   state: c[3], uid: parseInt(c[7],10) });
       }
     } catch (e) { out.push({ error: `${path}: ${e.message}` }); }
   }
@@ -374,11 +393,64 @@ app.get('/api/mavscan', (req, res) => {
       listenMs: SCAN_MS,
       multicastLock: false,               // Android-only concept
       interfaces: scanInterfaces(),
-      openUdpPorts: scanProcNetUdp(),
+      sockets: scanProcNet(),
       listened,
       appMavlinkPort: CONFIG.mavlinkPort,
+      myUid: typeof process.getuid === 'function' ? process.getuid() : -1,
     });
   });
+});
+
+// TRANSMITS. Sends one standard GCS heartbeat per endpoint and listens for a
+// reply. Many MAVLink UDP endpoints are servers that stay silent until a client
+// speaks first — if that is the case here, no port is "missing", we have simply
+// never introduced ourselves. Reached only from a button that says so.
+const PROBE_HOSTS = ['192.168.144.11', '192.168.144.12', '192.168.144.255'];
+const PROBE_PORTS = [19856, 14550, 14551, 14555];
+const PROBE_WAIT_MS = 3000;
+
+function probeHeartbeat() {
+  const pl = Buffer.alloc(9);
+  pl[4]=6; pl[5]=8; pl[6]=0; pl[7]=4; pl[8]=3;      // GCS, invalid autopilot, active
+  const hdr = Buffer.alloc(10);
+  hdr[0]=0xFD; hdr[1]=pl.length; hdr[5]=CONFIG.gcsSys; hdr[6]=CONFIG.gcsComp;
+  let c=0xFFFF;
+  for(let k=1;k<10;k++) c=crcAccum(hdr[k],c);
+  for(const b of pl) c=crcAccum(b,c);
+  c=crcAccum(50,c);                                  // HEARTBEAT crc_extra
+  return Buffer.concat([hdr,pl,Buffer.from([c&0xFF,(c>>8)&0xFF])]);
+}
+
+app.get('/api/mavprobe', (req, res) => {
+  const hb = probeHeartbeat();
+  const targets = [];
+  for (const host of PROBE_HOSTS) for (const port of PROBE_PORTS) targets.push({host, port});
+  console.log(`[PROBE] heartbeat -> ${targets.length} endpoints`);
+  let pending = targets.length;
+  const rows = [];
+  const done = () => { if(--pending === 0) res.json({ platform:'node', waitMs:PROBE_WAIT_MS, probed:rows }); };
+  for (const t of targets) {
+    const row = { host:t.host, port:t.port, sent:false, replies:0, sources:[], mavlink:false, sysIds:[], msgIds:[] };
+    const sysIds=new Set(), msgIds=new Set(), sources=new Set();
+    const s = dgram.createSocket({type:'udp4', reuseAddr:true});
+    let finished=false;
+    const finish = () => {
+      if(finished) return; finished=true;
+      row.sources=[...sources]; row.sysIds=[...sysIds]; row.msgIds=[...msgIds];
+      row.mavlink = msgIds.size>0;
+      try{ s.close(); }catch(e){}
+      rows.push(row); done();
+    };
+    s.on('error', e => { row.error=e.message; finish(); });
+    s.on('message', (msg, ri) => { row.replies++; sources.add(`${ri.address}:${ri.port}`); scanDecode(msg,sysIds,msgIds); });
+    s.bind(0, () => {
+      row.localPort = s.address().port;
+      try { s.setBroadcast(true); } catch(e) {}
+      const send = () => { try { s.send(hb, t.port, t.host, e => { if(!e) row.sent=true; }); } catch(e) { row.error=e.message; } };
+      send(); setTimeout(send, 1000);
+      setTimeout(finish, PROBE_WAIT_MS);
+    });
+  }
 });
 
 // Flight-mode command (LOCK → BRAKE, UNLOCK → LOITER). Only these two are allowed.

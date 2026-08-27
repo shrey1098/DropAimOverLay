@@ -71,6 +71,9 @@ class WebServer(
                 // Read-only: opens its own sockets, looks, closes them. Does not
                 // touch the live telemetry path.
                 uri == "/api/mavscan" -> json(MavScan.run(ctx).put("platform", "android").toString())
+                // Transmits: one standard GCS heartbeat per endpoint. Reached
+                // only from a button that says so.
+                uri == "/api/mavprobe" -> json(MavScan.probe().put("platform", "android").toString())
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
         } catch (e: Exception) {
