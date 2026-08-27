@@ -27,14 +27,26 @@ object Settings {
     private const val K_MAV  = "mavlink_port"
     private const val K_QGC  = "qgc_port"
     private const val K_URLS = "camera_urls"
+    private const val K_SRC  = "telemetry_source"
+    private const val K_BT   = "bluetooth_address"
+
+    /** Where telemetry comes from. Not every ground station puts MAVLink on IP:
+     *  the SIYI MK32 hands it to Android over a Bluetooth serial link. */
+    const val SRC_UDP = "udp"
+    const val SRC_BT  = "bluetooth"
 
     @Volatile private var mavPortV = Config.MAVLINK_PORT
     @Volatile private var qgcPortV = Config.QGC_PORT
+    @Volatile private var srcV     = SRC_UDP
+    @Volatile private var btAddrV  = ""
     /** camera id -> URL, only for cameras the operator has overridden. */
     @Volatile private var urls: Map<String, String> = emptyMap()
 
     val mavlinkPort: Int get() = mavPortV
     val qgcPort: Int get() = qgcPortV
+    val telemetrySource: String get() = srcV
+    /** Empty means "pick the paired device that offers a serial port". */
+    val bluetoothAddress: String get() = btAddrV
 
     /** Config.cameras with any operator-set URLs applied. */
     val cameras: List<Config.Camera>
@@ -44,11 +56,13 @@ object Settings {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mavPortV = p.getInt(K_MAV, Config.MAVLINK_PORT)
         qgcPortV = p.getInt(K_QGC, Config.QGC_PORT)
+        srcV     = p.getString(K_SRC, SRC_UDP) ?: SRC_UDP
+        btAddrV  = p.getString(K_BT, "") ?: ""
         urls = try {
             val o = JSONObject(p.getString(K_URLS, "{}") ?: "{}")
             o.keys().asSequence().associateWith { o.getString(it) }
         } catch (e: Exception) { emptyMap() }
-        Log.i(TAG, "mavlink=$mavPortV qgc=$qgcPortV overrides=${urls.keys}")
+        Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys}")
     }
 
     /**
@@ -56,9 +70,17 @@ object Settings {
      * wrong — the operator is on an aircraft and needs to be told, not guess.
      * Any argument left null keeps its current value.
      */
-    fun save(ctx: Context, mav: Int?, qgc: Int?, newUrls: Map<String, String>?): String? {
+    fun save(ctx: Context, mav: Int?, qgc: Int?, newUrls: Map<String, String>?,
+             source: String? = null, btAddress: String? = null): String? {
         val m = mav ?: mavPortV
         val q = qgc ?: qgcPortV
+        val s = (source ?: srcV).lowercase()
+        val bt = (btAddress ?: btAddrV).trim().uppercase()
+        if (s != SRC_UDP && s != SRC_BT) return "telemetry source must be '$SRC_UDP' or '$SRC_BT'"
+        // A blank address is legitimate: it means "use whichever paired device
+        // offers a serial port". Anything else has to look like a MAC.
+        if (bt.isNotEmpty() && !Regex("^([0-9A-F]{2}:){5}[0-9A-F]{2}$").matches(bt))
+            return "Bluetooth address must look like AA:BB:CC:11:22:33"
         if (m !in 1024..65535) return "MAVLink port must be between 1024 and 65535"
         if (q !in 1024..65535) return "QGC port must be between 1024 and 65535"
         // Both are UDP ports on this device; the same number for each would mean
@@ -76,12 +98,13 @@ object Settings {
             clean[id] = u
         }
 
-        mavPortV = m; qgcPortV = q; urls = clean
+        mavPortV = m; qgcPortV = q; urls = clean; srcV = s; btAddrV = bt
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(K_MAV, m).putInt(K_QGC, q)
+            .putString(K_SRC, s).putString(K_BT, bt)
             .putString(K_URLS, JSONObject(clean as Map<*, *>).toString())
             .apply()
-        Log.i(TAG, "saved mavlink=$m qgc=$q overrides=${clean.keys}")
+        Log.i(TAG, "saved source=$s mavlink=$m qgc=$q bt=$bt overrides=${clean.keys}")
         return null
     }
 
@@ -89,6 +112,7 @@ object Settings {
     fun reset(ctx: Context) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         mavPortV = Config.MAVLINK_PORT; qgcPortV = Config.QGC_PORT; urls = emptyMap()
+        srcV = SRC_UDP; btAddrV = ""
         Log.i(TAG, "reset to defaults")
     }
 
@@ -104,6 +128,9 @@ object Settings {
         return JSONObject()
             .put("mavlinkPort", mavPortV).put("defaultMavlinkPort", Config.MAVLINK_PORT)
             .put("qgcPort", qgcPortV).put("defaultQgcPort", Config.QGC_PORT)
+            .put("telemetrySource", srcV)
+            .put("bluetoothAddress", btAddrV)
+            .put("bluetoothDevices", BluetoothLink.devicesJson())
             .put("cameras", cams)
     }
 }

@@ -94,6 +94,38 @@ does not drop telemetry. Clearing a URL restores the compiled-in default;
 **RESTORE DEFAULTS** clears all of them. `Config.kt` holds the defaults, and
 nothing here touches the ballistics or the aim solution.
 
+## Telemetry over Bluetooth (SIYI MK32)
+
+Not every ground station puts MAVLink on IP. The SIYI MK32 hands it to Android
+over a **Bluetooth serial (SPP) link at 57600** — which is why a scan of eleven
+UDP ports, every socket on the device and the whole `192.168.144.x` subnet found
+nothing. There was nothing on the network to find. UniGCS on the same handheld
+shows full telemetry with its Datalink set to "Bluetooth", which is what
+identified it.
+
+**⚙ CONNECTION → SETTINGS → Telemetry source → BLUETOOTH**, then pick the paired
+datalink (or leave it on Auto, which takes the first paired device advertising
+the serial profile).
+
+Two things follow from RFCOMM being point-to-point:
+
+- **The link is exclusive.** While this app holds it, no other app on the ground
+  station can read the aircraft. That is why the app relays the raw stream on to
+  the QGC port — anything else that wants telemetry takes it over UDP from there.
+- **Commands go back the same way.** LOCK/UNLOCK/RTL are written to the serial
+  link rather than sent to a UDP peer, and unlike UDP it does not need the
+  duplicate send.
+
+`BluetoothLink` tries three ways in — secure SPP, insecure SPP, then RFCOMM
+channel 1 by reflection — because serial bridges vary and cheap ones often have
+a missing or wrong SDP record. It reconnects with backoff if the link drops.
+
+A serial link is a **byte stream**, not datagrams: a MAVLink frame can be split
+across two reads and two frames can arrive in one. `MavlinkService.feed` buffers
+and consumes only whole frames; handing a half frame to a parser that assumes
+datagram boundaries silently drops telemetry. The reassembly is verified against
+chunk sizes from 1 byte upward, including junk injected mid-stream.
+
 ## Finding MAVLink on an unfamiliar ground station
 
 **⚙ CONNECTION → ◎ MAVLINK SCAN** answers "which port is the telemetry on?"

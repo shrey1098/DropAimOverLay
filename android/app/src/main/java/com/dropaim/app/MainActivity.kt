@@ -58,6 +58,17 @@ class MainActivity : AppCompatActivity() {
         // on the compiled-in defaults.
         Settings.load(this)
 
+        // Bluetooth telemetry is an install-time permission through Android 11,
+        // which covers the fielded ground stations (Android 9). On 12+ it has to
+        // be asked for, and without it the link silently never connects — so ask
+        // once, here, rather than letting it fail in the air.
+        if (Settings.telemetrySource == Settings.SRC_BT &&
+            android.os.Build.VERSION.SDK_INT >= 31) {
+            val perm = "android.permission.BLUETOOTH_CONNECT"
+            if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(perm), REQ_BT)
+        }
+
         video = VideoPipe(applicationContext)
 
         // Bring up the native services first, then the embedded server.
@@ -257,6 +268,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val SOCKET_TIMEOUT = 10000
+        private const val REQ_BT = 7001
         private const val MAX_RETRIES = 5
         private const val DEADZONE = 0.08f
 

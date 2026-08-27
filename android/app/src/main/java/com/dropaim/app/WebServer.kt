@@ -62,6 +62,7 @@ class WebServer(
                         .put("mavlink", Telemetry.mavlinkOk)
                         .put("videoUrl", FrameBus.activeUrl)
                         .put("videoErr", FrameBus.lastError)
+                        .put("link", mav.linkDescription)
                         .toString())
                 uri == "/api/mode" && session.method == Method.POST -> apiMode(session)
                 uri == "/api/cameras" -> apiCameras()
@@ -171,6 +172,8 @@ class WebServer(
 
         val oldMav = Settings.mavlinkPort
         val oldQgc = Settings.qgcPort
+        val oldSrc = Settings.telemetrySource
+        val oldBt  = Settings.bluetoothAddress
         val oldUrls = Settings.cameras.associate { it.id to it.url }
 
         if (o.optBoolean("reset", false)) {
@@ -184,13 +187,18 @@ class WebServer(
             o.optJSONObject("cameras")?.let { c ->
                 c.keys().forEach { k -> urls[k] = c.optString(k, "") }
             }
-            val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null)
+            val src = if (o.has("telemetrySource")) o.optString("telemetrySource", "") else null
+            val bta = if (o.has("bluetoothAddress")) o.optString("bluetoothAddress", "") else null
+            val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null, src, bta)
             if (err != null)
                 return jsonStatus(Response.Status.BAD_REQUEST,
                     JSONObject().put("ok", false).put("err", err).toString())
         }
 
-        val portsChanged = Settings.mavlinkPort != oldMav || Settings.qgcPort != oldQgc
+        // Switching transport, or picking a different Bluetooth device, means the
+        // same thing as a port change: the telemetry link has to be rebuilt.
+        val portsChanged = Settings.mavlinkPort != oldMav || Settings.qgcPort != oldQgc ||
+                           Settings.telemetrySource != oldSrc || Settings.bluetoothAddress != oldBt
         val urlsChanged  = Settings.cameras.associate { it.id to it.url } != oldUrls
         // This runs on an HTTP worker thread, not the main thread, so the brief
         // block inside restart() is safe here.

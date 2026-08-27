@@ -325,6 +325,16 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <button class="btn" id="setBtn">⚙ SETTINGS — PORTS &amp; CAMERA URLS</button>
     <div id="setRows" style="display:none;flex-direction:column;gap:7px">
       <div style="font-size:9px;color:var(--mt);line-height:1.4">Where this ground station looks for telemetry and video. Nothing here changes the ballistics or the aim solution.</div>
+      <div class="f"><label>Telemetry source</label>
+        <div id="setSrc" style="display:flex;gap:4px">
+          <button class="btn" data-src="udp">UDP</button>
+          <button class="btn" data-src="bluetooth">BLUETOOTH</button>
+        </div>
+      </div>
+      <div id="setBtRow" style="display:none;flex-direction:column;gap:5px">
+        <div class="f"><label>Bluetooth datalink</label><select id="setBtDev"></select></div>
+        <div style="font-size:9px;color:var(--mt);line-height:1.4">Serial telemetry, as UniGCS uses. The link is exclusive — while this app holds it no other app on the ground station can read the aircraft, so it is relayed on to the QGC port below.</div>
+      </div>
       <div class="f"><label>MAVLink listen port <span id="setMavD">—</span></label><input type="text" id="setMav" inputmode="numeric" autocomplete="off"></div>
       <div class="f"><label>QGC port <span id="setQgcD">—</span></label><input type="text" id="setQgc" inputmode="numeric" autocomplete="off"></div>
       <div id="setCams" style="display:flex;flex-direction:column;gap:7px"></div>
@@ -1039,6 +1049,7 @@ async function loadSettings(){
 
 function paintSettings(){
   if(!settings) return;
+  paintSource();
   E('setMav').value = settings.mavlinkPort;
   E('setQgc').value = settings.qgcPort;
   E('setMavD').textContent = 'default '+settings.defaultMavlinkPort;
@@ -1059,6 +1070,47 @@ function paintSettings(){
     : 'Saved on this device and applied on every launch. Clear a URL to restore its built-in default.';
 }
 
+// Which transport the operator has selected. Not saved until SAVE & APPLY, so
+// picking BLUETOOTH does not drop a working UDP link mid-flight by accident.
+let pendingSrc = null;
+function currentSrc(){ return pendingSrc || (settings && settings.telemetrySource) || 'udp'; }
+
+function paintSource(){
+  const src = currentSrc();
+  [...E('setSrc').children].forEach(b=>{
+    const on = b.dataset.src===src;
+    b.style.background = on ? 'var(--ac)' : 'transparent';
+    b.style.color      = on ? '#04121c'  : 'var(--ac)';
+  });
+  const bt = src==='bluetooth';
+  E('setBtRow').style.display = bt ? 'flex' : 'none';
+  if(bt){
+    const sel=E('setBtDev'), devs=(settings&&settings.bluetoothDevices)||[];
+    // Rebuild only when the device set changes, so the operator's choice is not
+    // reset under them while the panel is open.
+    const sig=devs.map(d=>d.address).join(',');
+    if(sel.dataset.sig!==sig){
+      sel.dataset.sig=sig; sel.innerHTML='';
+      const auto=document.createElement('option');
+      auto.value=''; auto.textContent = devs.length ? 'Auto — first serial device' : 'No paired devices';
+      sel.appendChild(auto);
+      devs.forEach(d=>{
+        const o=document.createElement('option');
+        o.value=d.address;
+        o.textContent=(d.spp?'[serial] ':'')+d.name+'  '+d.address;
+        sel.appendChild(o);
+      });
+      sel.value=(settings&&settings.bluetoothAddress)||'';
+    }
+  }
+}
+
+E('setSrc').addEventListener('click', e=>{
+  const b=e.target.closest('button[data-src]'); if(!b) return;
+  pendingSrc=b.dataset.src; paintSource();
+  setMsg('Not applied yet — press SAVE & APPLY.', true);
+});
+
 function setMsg(text, ok){
   const m=E('setMsg');
   m.style.display=''; m.textContent=text;
@@ -1077,6 +1129,7 @@ async function postSettings(body, working){
   // whichever build is running, so the message the operator sees is its message.
   if(!r.ok){ setMsg('✕ '+(r.err||'rejected'), false); return; }
   settings = r;
+  pendingSrc = null;              // the server's answer is now the truth
   paintSettings();
   const parts=[];
   if(r.mavlinkRestarted) parts.push('telemetry link rebound');
@@ -1103,9 +1156,11 @@ E('setSave').addEventListener('click', ()=>{
     const i=E('setUrl_'+c.id); if(i) urls[c.id]=i.value.trim();
   });
   postSettings({
-    mavlinkPort: parseInt(E('setMav').value, 10),
-    qgcPort:     parseInt(E('setQgc').value, 10),
-    cameras:     urls,
+    mavlinkPort:      parseInt(E('setMav').value, 10),
+    qgcPort:          parseInt(E('setQgc').value, 10),
+    telemetrySource:  currentSrc(),
+    bluetoothAddress: E('setBtDev').value || '',
+    cameras:          urls,
   }, 'Saving…');
 });
 

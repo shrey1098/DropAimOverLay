@@ -198,6 +198,11 @@ function settingsJson(extra) {
     persisted: false,
     mavlinkPort: CONFIG.mavlinkPort, defaultMavlinkPort: DEFAULTS.mavlinkPort,
     qgcPort: CONFIG.qgcPort,         defaultQgcPort: DEFAULTS.qgcPort,
+    // Bluetooth telemetry is an Android capability; the bench build is UDP only
+    // and says so by offering no devices rather than pretending to have them.
+    telemetrySource: 'udp',
+    bluetoothAddress: '',
+    bluetoothDevices: [],
     cameras: CONFIG.cameras.map((c, i) => ({
       id: c.id, label: c.label, url: c.url,
       defaultUrl: DEFAULTS.cameraUrls[i],
@@ -262,6 +267,8 @@ app.post('/api/settings', (req, res) => {
     const qgc = b.qgcPort     === undefined ? CONFIG.qgcPort     : Number(b.qgcPort);
     const err = validateSettings(mav, qgc, b.cameras);
     if(err) return res.status(400).json({ ok:false, err });
+    if(b.telemetrySource && b.telemetrySource !== 'udp')
+      return res.status(400).json({ ok:false, err:'this build supports UDP telemetry only — Bluetooth is Android' });
     CONFIG.mavlinkPort = mav;
     CONFIG.qgcPort     = qgc;
     if(b.cameras) CONFIG.cameras.forEach((c, i) => {
