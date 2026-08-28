@@ -980,26 +980,74 @@ function paintCamButtons(){
     b.textContent = c && c.model ? c.label+' '+c.model : (c?c.label:b.textContent);
   });
   const c = cameras.find(x=>x.id===activeCam), w=E('camWarn');
-  if(c && !c.calibrated){
-    w.style.display='';
-    w.textContent='⚠ '+(c.model?c.label+' '+c.model:c.label)+' zoom scale is NOT calibrated. '
+  const name = c ? (c.model?c.label+' '+c.model:c.label) : '';
+  if(c && c.zoomSet){
+    // Operator-set: no longer the compiled-in guess, but still their figure and
+    // worth saying so rather than silently calling it calibrated.
+    w.style.display=''; w.style.color='var(--gd)';
+    w.textContent='◆ '+name+' zoom '+(+c.zoom).toFixed(2)+'× was set here and is saved on this device.';
+  } else if(c && !c.calibrated){
+    w.style.display=''; w.style.color='var(--rd)';
+    w.textContent='⚠ '+name+' zoom scale is NOT calibrated. '
                  +'Aim solutions on this sensor are unreliable until the Zoom value is set '
                  +'against a known ground distance.';
   } else w.style.display='none';
 }
 
 // Each sensor carries its own aim scale. Carrying the day camera's 22× over to
-// a thermal sensor with different optics would compute a confidently wrong
-// aim point, so the value follows the sensor — and, once the stream reports its
+// a thermal sensor with different optics would compute a confidently wrong aim
+// point, so the value follows the sensor — and, once the stream reports its
 // resolution, the specific model of that sensor.
+//
+// But it must follow the sensor ONLY when the sensor changes. This used to run
+// on every /api/cameras poll, so any value the operator dialled in was silently
+// dragged back to the camera default within five seconds — which made the
+// thermal scale impossible to calibrate, since calibrating it is exactly the
+// act of moving this slider.
+let zoomKey    = null;   // sensor (and variant) the slider was last auto-set for
+let zoomManual = false;  // operator has moved it since then
+
 function applyCamZoom(c){
   if(!c || !isFinite(c.zoom) || c.zoom<=0) return;
+  const key = c.id + '|' + (c.model || '');
+  if(key === zoomKey) return;                       // already applied for this sensor
+  // A variant identified for the SAME sensor refines the default — but not over
+  // a figure the operator has just measured by hand.
+  if(zoomManual && zoomKey && zoomKey.split('|')[0] === c.id){ zoomKey = key; return; }
+  zoomKey = key; zoomManual = false;
+  setZoom(c.zoom);
+}
+
+function setZoom(v){
   const z=E('zoom');
-  if(!z || parseFloat(z.value)===c.zoom) return;
-  z.value=c.zoom;
-  E('zmL').textContent=(Number.isInteger(c.zoom)?c.zoom.toFixed(0):c.zoom.toFixed(2))+'×';
+  if(!z || parseFloat(z.value)===v) return;
+  z.value=v;
+  E('zmL').textContent=(Number.isInteger(v)?v.toFixed(0):v.toFixed(2))+'×';
   if(targetMark) computeAim(true);        // rescale an existing solution
 }
+
+// Touching the slider hands control to the operator until they switch sensors.
+E('zoom').addEventListener('input', ()=>{ zoomManual = true; });
+
+// Releasing it saves the figure against the active sensor. Calibrating a sensor
+// IS moving this slider, so a value that evaporated on the next app start would
+// mean the calibration never really happened. 'change' not 'input': once per
+// release, not once per pixel of drag.
+E('zoom').addEventListener('change', async ()=>{
+  if(!activeCam) return;                       // no sensor list (browser build)
+  const v = parseFloat(E('zoom').value);
+  if(!isFinite(v) || v<=0) return;
+  const body={}; body[activeCam]=v;
+  try{
+    const r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+                                           body:JSON.stringify({cameraZooms:body})}).then(x=>x.json());
+    if(r.ok){
+      const c=cameras.find(x=>x.id===activeCam);
+      if(c){ c.zoom=v; c.calibrated=true; c.zoomSet=true; paintCamButtons(); }
+      showBanner('ZOOM '+v.toFixed(2)+'× SAVED FOR '+activeCam.toUpperCase()); hideBanner(2000);
+    }
+  }catch(e){ /* bench build without the endpoint: the slider still works */ }
+});
 
 async function selectCamera(c){
   if(c.id===activeCam) return;

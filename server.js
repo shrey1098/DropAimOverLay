@@ -269,6 +269,16 @@ app.post('/api/settings', (req, res) => {
     if(err) return res.status(400).json({ ok:false, err });
     if(b.telemetrySource && b.telemetrySource !== 'udp')
       return res.status(400).json({ ok:false, err:'this build supports UDP telemetry only — Bluetooth is Android' });
+    // Measured aim scales, saved per sensor. Merged, not replaced: saving the
+    // day camera must not wipe a measured thermal figure.
+    if(b.cameraZooms) for(const [id, z] of Object.entries(b.cameraZooms)){
+      const c = CONFIG.cameras.find(x=>x.id===id);
+      if(!c) return res.status(400).json({ ok:false, err:`unknown camera '${id}'` });
+      const v = Number(z);
+      if(!Number.isFinite(v) || v <= 0) return res.status(400).json({ ok:false, err:`camera '${id}' zoom must be greater than 0` });
+      if(v > 100) return res.status(400).json({ ok:false, err:`camera '${id}' zoom looks wrong (${v}) — expected 0.5 to 100` });
+      c.zoom = v; c.calibrated = true; c.zoomSet = true;
+    }
     CONFIG.mavlinkPort = mav;
     CONFIG.qgcPort     = qgc;
     if(b.cameras) CONFIG.cameras.forEach((c, i) => {

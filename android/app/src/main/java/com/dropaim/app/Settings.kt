@@ -27,6 +27,7 @@ object Settings {
     private const val K_MAV  = "mavlink_port"
     private const val K_QGC  = "qgc_port"
     private const val K_URLS = "camera_urls"
+    private const val K_ZOOM = "camera_zooms"
     private const val K_SRC  = "telemetry_source"
     private const val K_BT   = "bluetooth_address"
 
@@ -41,6 +42,10 @@ object Settings {
     @Volatile private var btAddrV  = ""
     /** camera id -> URL, only for cameras the operator has overridden. */
     @Volatile private var urls: Map<String, String> = emptyMap()
+    /** camera id -> aim zoom, measured by the operator against a known ground
+     *  distance. Calibrating a sensor IS moving that slider, so the figure has
+     *  to survive a restart or the calibration was never really done. */
+    @Volatile private var zooms: Map<String, Double> = emptyMap()
 
     val mavlinkPort: Int get() = mavPortV
     val qgcPort: Int get() = qgcPortV
@@ -48,9 +53,19 @@ object Settings {
     /** Empty means "pick the paired device that offers a serial port". */
     val bluetoothAddress: String get() = btAddrV
 
-    /** Config.cameras with any operator-set URLs applied. */
+    /** Config.cameras with any operator-set URLs and zooms applied. */
     val cameras: List<Config.Camera>
-        get() = Config.cameras.map { c -> urls[c.id]?.let { c.copy(url = it) } ?: c }
+        get() = Config.cameras.map { c ->
+            var out = c
+            urls[c.id]?.let { out = out.copy(url = it) }
+            zooms[c.id]?.let { out = out.copy(zoom = it, calibrated = true) }
+            out
+        }
+
+    /** The operator's measured zoom for a sensor, or null if never set. It wins
+     *  over the compiled-in default AND over a variant's default: a figure
+     *  measured on this airframe beats one guessed from the resolution. */
+    fun zoomOverride(id: String): Double? = zooms[id]
 
     fun load(ctx: Context) {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -62,6 +77,10 @@ object Settings {
             val o = JSONObject(p.getString(K_URLS, "{}") ?: "{}")
             o.keys().asSequence().associateWith { o.getString(it) }
         } catch (e: Exception) { emptyMap() }
+        zooms = try {
+            val o = JSONObject(p.getString(K_ZOOM, "{}") ?: "{}")
+            o.keys().asSequence().associateWith { o.getDouble(it) }
+        } catch (e: Exception) { emptyMap() }
         Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys}")
     }
 
@@ -71,7 +90,8 @@ object Settings {
      * Any argument left null keeps its current value.
      */
     fun save(ctx: Context, mav: Int?, qgc: Int?, newUrls: Map<String, String>?,
-             source: String? = null, btAddress: String? = null): String? {
+             source: String? = null, btAddress: String? = null,
+             newZooms: Map<String, Double>? = null): String? {
         val m = mav ?: mavPortV
         val q = qgc ?: qgcPortV
         val s = (source ?: srcV).lowercase()
@@ -98,11 +118,23 @@ object Settings {
             clean[id] = u
         }
 
-        mavPortV = m; qgcPortV = q; urls = clean; srcV = s; btAddrV = bt
+        // Merged, not replaced: the zoom slider saves one sensor at a time, and
+        // saving the day camera must not wipe a measured thermal figure.
+        val zoomOut = HashMap(zooms)
+        newZooms?.forEach { (id, z) ->
+            if (id !in known) return "unknown camera '$id'"
+            // Zero would make pixels-per-metre zero and the aim point undefined.
+            if (!z.isFinite() || z <= 0.0) return "camera '$id' zoom must be greater than 0"
+            if (z > 100.0) return "camera '$id' zoom looks wrong (${z}) — expected 0.5 to 100"
+            zoomOut[id] = z
+        }
+
+        mavPortV = m; qgcPortV = q; urls = clean; srcV = s; btAddrV = bt; zooms = zoomOut
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(K_MAV, m).putInt(K_QGC, q)
             .putString(K_SRC, s).putString(K_BT, bt)
             .putString(K_URLS, JSONObject(clean as Map<*, *>).toString())
+            .putString(K_ZOOM, JSONObject(zoomOut as Map<*, *>).toString())
             .apply()
         Log.i(TAG, "saved source=$s mavlink=$m qgc=$q bt=$bt overrides=${clean.keys}")
         return null
@@ -112,7 +144,7 @@ object Settings {
     fun reset(ctx: Context) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         mavPortV = Config.MAVLINK_PORT; qgcPortV = Config.QGC_PORT; urls = emptyMap()
-        srcV = SRC_UDP; btAddrV = ""
+        srcV = SRC_UDP; btAddrV = ""; zooms = emptyMap()
         Log.i(TAG, "reset to defaults")
     }
 
@@ -123,7 +155,10 @@ object Settings {
                 .put("id", c.id).put("label", c.label)
                 .put("url", urls[c.id] ?: c.url)
                 .put("defaultUrl", c.url)
-                .put("overridden", c.id in urls))
+                .put("overridden", c.id in urls)
+                .put("zoom", zooms[c.id] ?: c.zoom)
+                .put("defaultZoom", c.zoom)
+                .put("zoomSet", c.id in zooms))
         }
         return JSONObject()
             .put("mavlinkPort", mavPortV).put("defaultMavlinkPort", Config.MAVLINK_PORT)

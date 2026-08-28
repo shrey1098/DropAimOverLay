@@ -127,12 +127,17 @@ class WebServer(
             // and only once its resolution has arrived. Everything else reports
             // the camera's own default.
             val v = if (c.id == activeId) c.variantFor(FrameBus.videoW, FrameBus.videoH) else null
+            // Precedence: what the operator measured on this airframe, then the
+            // variant identified from the stream, then the compiled-in default.
+            // A figure measured here beats one guessed from a resolution.
+            val set = Settings.zoomOverride(c.id)
             arr.put(JSONObject()
                 .put("index", i)
                 .put("id", c.id)
                 .put("label", c.label)
-                .put("zoom", v?.zoom ?: c.zoom)
-                .put("calibrated", v?.calibrated ?: c.calibrated)
+                .put("zoom", set ?: v?.zoom ?: c.zoom)
+                .put("calibrated", if (set != null) true else (v?.calibrated ?: c.calibrated))
+                .put("zoomSet", set != null)
                 .put("model", v?.model ?: "")
                 .put("present", FrameBus.availableCameras.isEmpty() || c.id in FrameBus.availableCameras))
         }
@@ -189,7 +194,12 @@ class WebServer(
             }
             val src = if (o.has("telemetrySource")) o.optString("telemetrySource", "") else null
             val bta = if (o.has("bluetoothAddress")) o.optString("bluetoothAddress", "") else null
-            val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null, src, bta)
+            val zooms = HashMap<String, Double>()
+            o.optJSONObject("cameraZooms")?.let { z ->
+                z.keys().forEach { k -> zooms[k] = z.optDouble(k, Double.NaN) }
+            }
+            val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null,
+                                    src, bta, if (o.has("cameraZooms")) zooms else null)
             if (err != null)
                 return jsonStatus(Response.Status.BAD_REQUEST,
                     JSONObject().put("ok", false).put("err", err).toString())
