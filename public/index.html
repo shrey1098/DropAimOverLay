@@ -979,18 +979,15 @@ function paintCamButtons(){
     const c = cameras.find(x=>x.id===b.dataset.id);
     b.textContent = c && c.model ? c.label+' '+c.model : (c?c.label:b.textContent);
   });
+  // The red "NOT calibrated" warning is gone at the operator's request. What
+  // remains is a one-line statement of the scale actually in use, which is the
+  // number the aim solution depends on and the only way to tell at a glance
+  // that a sensor is still on its compiled-in default.
   const c = cameras.find(x=>x.id===activeCam), w=E('camWarn');
   const name = c ? (c.model?c.label+' '+c.model:c.label) : '';
-  if(c && c.zoomSet){
-    // Operator-set: no longer the compiled-in guess, but still their figure and
-    // worth saying so rather than silently calling it calibrated.
-    w.style.display=''; w.style.color='var(--gd)';
-    w.textContent='◆ '+name+' zoom '+(+c.zoom).toFixed(2)+'× was set here and is saved on this device.';
-  } else if(c && !c.calibrated){
-    w.style.display=''; w.style.color='var(--rd)';
-    w.textContent='⚠ '+name+' zoom scale is NOT calibrated. '
-                 +'Aim solutions on this sensor are unreliable until the Zoom value is set '
-                 +'against a known ground distance.';
+  if(c){
+    w.style.display=''; w.style.color='var(--mt)';
+    w.textContent=name+' aim zoom '+(+c.zoom).toFixed(2)+'×'+(c.zoomSet?' (set here)':'');
   } else w.style.display='none';
 }
 
