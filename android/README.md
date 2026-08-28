@@ -153,6 +153,30 @@ multicast on Wi-Fi without one, which would hide a datalink that broadcasts to
 `x.x.x.255`. That is what `ACCESS_WIFI_STATE` and `CHANGE_WIFI_MULTICAST_STATE`
 in the manifest are for; neither prompts the user.
 
+## Browser CSS must render on Chrome/WebView 66
+
+Same reason as the JS floor below, and the failure is worse because it is
+silent. `grid-template-columns: 1fr clamp(170px,26vw,320px)` needs **Chrome
+79**. On a ground station with an older WebView the browser could not parse the
+value, so it dropped the **whole declaration** — the grid fell back to one
+implicit column, and the video pane (whose children are all absolutely
+positioned) collapsed to zero height. The operator got a full screen of
+parameters and no video, from a build that looked perfect on every other
+machine.
+
+Run `npm run check`. Things to avoid, and what to write instead:
+
+| Don't | Needs | Do |
+|---|---|---|
+| `clamp()` / `min()` / `max()` | Chrome 79 | stepped `@media` queries with fixed px |
+| `inset: 0` | Chrome 87 | `top/right/bottom/left` longhand |
+| `gap` on a **flex** container | Chrome 84 | margins — `.x > * + * {margin-top:7px}` |
+| `aspect-ratio` | Chrome 88 | a `padding-top` percentage box |
+| `:is()` / `:where()` | Chrome 88 | the selectors written out |
+
+`gap` on a **grid** container is fine (Chrome 66); the checker allows it and the
+`grid-gap` alias is written alongside for margin.
+
 ## Browser JS must parse as ES2017
 
 The ground stations run old Android with a stock System WebView — the SIYI

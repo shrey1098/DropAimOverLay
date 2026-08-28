@@ -16,7 +16,7 @@
 :root{--bg:#080c10;--sf:#0d1520;--cd:#111d2b;--bd:#1a3050;--ac:#00e5ff;--gn:#00ff88;--rd:#ff3b55;--gd:#ffd700;--or:#ff7b00;--tx:#b8cfe0;--mt:#3d607a}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{width:100%;height:100%;background:var(--bg);color:var(--tx);font-family:'Share Tech Mono',monospace;font-size:13px;overflow:hidden}
-body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
+body::after{content:'';position:fixed;top:0;right:0;bottom:0;left:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
 
 /* Layout: video left, controls right — at EVERY width.
    This used to stack into video-on-top / controls-below under 600px. That put
@@ -25,18 +25,27 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
    tightest. The panel now SCALES and the layout never changes shape, so the
    app is laid out identically on a small controller and a 1080p ground
    station — muscle memory carries across both.
-   clamp: never narrower than 170px (a slider stops being usable below that),
-   never wider than the 320px the panel was designed at, ~26vw in between. */
-.layout{display:grid;grid-template-columns:1fr clamp(170px,26vw,320px);height:100vh;overflow:hidden}
+   Stepped with media queries rather than clamp(): clamp() needs Chrome 79 and
+   the oldest ground station's WebView is older, which made the browser DROP the
+   whole declaration. The grid then fell back to one implicit column and the
+   video pane — whose children are all absolutely positioned — collapsed to zero
+   height, leaving the parameter panel filling the screen. Never narrower than
+   170px (a slider stops being usable below that), never wider than the 320px
+   the panel was designed at. */
+.layout{display:grid;grid-template-columns:1fr 320px;height:100vh;overflow:hidden}
+@media(max-width:1230px){.layout{grid-template-columns:1fr 280px}}
+@media(max-width:1000px){.layout{grid-template-columns:1fr 240px}}
+@media(max-width:820px){ .layout{grid-template-columns:1fr 200px}}
+@media(max-width:650px){ .layout{grid-template-columns:1fr 170px}}
 /* The narrow-screen tuning lives at the END of this stylesheet — it overrides
    rules declared further down, and at equal specificity the later one wins. */
 
 /* Video pane */
 .vpane{position:relative;background:#000;overflow:hidden}
-canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:crosshair;touch-action:none}
+canvas#main{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;z-index:1;cursor:crosshair;touch-action:none}
 /* pointer-events:none is load-bearing — this sits above the canvas, so without
    it the "NO VIDEO" panel swallows every tap and the target cannot be marked. */
-.nosig{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px;pointer-events:none}
+.nosig{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px;pointer-events:none}
 .nosig .icon{font-size:40px;opacity:.3}
 #nosigWhy{max-width:70%;text-align:center;word-break:break-all;line-height:1.5}
 .nosig.hide{display:none}
@@ -50,35 +59,49 @@ canvas#main{position:absolute;inset:0;width:100%;height:100%;z-index:1;cursor:cr
 /* Status bar */
 /* wrap: the link pills are the one thing that must never be clipped — a VIDEO
    or MAVLINK pill half off the edge is the same as not having it. */
-.sbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
+.sbar{display:flex;flex-wrap:wrap;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
 .pill{padding:2px 7px;border:1px solid;font-size:9px;border-radius:1px}
 .pill.ok{border-color:var(--gn);color:var(--gn)}.pill.bad{border-color:var(--rd);color:var(--rd);animation:blink 1s step-end infinite}
 .pill.warn{border-color:var(--gd);color:var(--gd)}
 @keyframes blink{50%{opacity:.3}}
 
 /* Sidebar */
-.side{background:var(--sf);border-left:1px solid var(--bd);overflow-y:auto;display:flex;flex-direction:column;gap:0}
+.side{background:var(--sf);border-left:1px solid var(--bd);overflow-y:auto;display:flex;flex-direction:column}
 .side::-webkit-scrollbar{width:3px}.side::-webkit-scrollbar-thumb{background:var(--bd)}
 
 /* Sections */
 .sec{border-bottom:1px solid var(--bd);flex-shrink:0}
 .sh{background:rgba(0,229,255,.05);padding:6px 10px;font-size:9px;letter-spacing:2px;color:var(--ac);border-bottom:1px solid var(--bd)}
-.sb{padding:8px 10px;display:flex;flex-direction:column;gap:7px}
+.sb{padding:8px 10px;display:flex;flex-direction:column}
 
 /* Telemetry grid */
-.tg{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.tg{display:grid;grid-template-columns:1fr 1fr;grid-gap:5px;gap:5px}
 .tc{background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:4px 7px}
 .tc .tl{font-size:8px;color:var(--mt);letter-spacing:1px}
 .tc .tv{font-family:'Orbitron',sans-serif;font-size:13px;color:var(--gn);line-height:1.1}
 
 /* Fields */
-.f{display:flex;flex-direction:column;gap:3px}
+.f{display:flex;flex-direction:column}
 .f label{font-size:9px;color:var(--mt);letter-spacing:1px;display:flex;justify-content:space-between}
 .f label span{color:var(--ac)}
 input[type=range]{-webkit-appearance:none;width:100%;height:22px;background:transparent;outline:none;cursor:pointer}
 input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--bd);border-radius:1px}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--ac);margin-top:-8px;box-shadow:0 0 6px var(--ac)}
 select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:11px;padding:5px 7px;width:100%;border-radius:1px;outline:none}
+
+/* Flexbox gap needs Chrome 84 and the oldest ground station is older, so the
+   spacing is done with margins instead — identical where gap works, and the
+   difference matters: without it LOCK, UNLOCK and RTL sit edge to edge, which
+   is a mis-tap on a touchscreen. */
+.sb > * + *{margin-top:7px}
+.f > * + *{margin-top:3px}
+.nosig > * + *{margin-top:10px}
+.sbar > *{margin:2px 6px 2px 0}
+#camBtns > * + *, #setSrc > * + *{margin-left:4px}
+.hrow{display:flex}
+.hrow > * + *{margin-left:5px}
+#simRows > * + *, #setRows > * + *, #setCams > * + *{margin-top:7px}
+#setBtRow > * + *, #simSatRow > * + *{margin-top:5px}
 
 /* Buttons */
 .btn{width:100%;padding:8px;background:transparent;border:1px solid var(--ac);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:all .15s;touch-action:manipulation}
@@ -108,7 +131,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
    the middle of the picture. */
 @media(max-width:700px){
   .sh{padding:5px 7px;letter-spacing:1px}
-  .sb{padding:6px 7px;gap:5px}
+  .sb{padding:6px 7px}
+  .sb > * + *{margin-top:5px}
   .sbar{padding:5px 7px}
   .tg{grid-template-columns:1fr}      /* two columns cannot fit 170px */
   .tc{padding:3px 6px}
@@ -215,7 +239,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 
   <div class="sec"><div class="sh">🌬 WIND OVERRIDE</div><div class="sb">
     <div style="font-size:9px;color:var(--mt);line-height:1.4">FC wind used when available.</div>
-    <div style="display:flex;gap:5px">
+    <div class="hrow">
       <input type="text" id="wLoc" placeholder="City" value="Jaipur" style="flex:1">
       <button class="btn btn-gd" id="fetchW" style="width:auto;padding:4px 8px">FETCH</button>
     </div>
@@ -224,7 +248,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📦 PAYLOAD</div><div class="sb">
-    <div style="display:flex;gap:5px;align-items:stretch">
+    <div class="hrow" style="align-items:stretch">
       <select id="cal" style="flex:1">
         <option value="81" selected>81 mm</option>
         <option value="51">51 mm</option>
@@ -256,7 +280,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec" id="camSec" style="display:none"><div class="sh">🎥 SENSOR</div><div class="sb">
-    <div id="camBtns" style="display:flex;gap:4px"></div>
+    <div id="camBtns" style="display:flex"></div>
     <div id="camWarn" style="display:none;font-size:9px;color:var(--rd);line-height:1.4;margin-top:4px"></div>
   </div></div>
 
@@ -285,12 +309,12 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   <div class="sec"><div class="sh">🎓 TRAINING SIMULATOR</div><div class="sb">
     <div style="font-size:9px;color:var(--mt);line-height:1.4">Synthetic feed + telemetry. Marking, aim, LOCK, offset and logging behave exactly as live.</div>
     <button class="btn btn-gd" id="simBtn">▶ START SIMULATOR</button>
-    <div id="simRows" style="display:none;flex-direction:column;gap:7px">
+    <div id="simRows" style="display:none;flex-direction:column">
       <div class="f"><label>Scene</label><select id="simScene">
         <option value="dummy" selected>Dummy range — painted target</option>
         <option value="sat">Satellite image (load below)</option>
       </select></div>
-      <div id="simSatRow" style="display:none;flex-direction:column;gap:5px">
+      <div id="simSatRow" style="display:none;flex-direction:column">
         <input type="file" id="simFile" accept="image/*" style="font-size:9px">
         <div class="f"><label>Image ground width <span id="simGwL">80 m</span></label><input type="range" id="simGw" min="20" max="500" value="80" step="5"></div>
       </div>
@@ -305,7 +329,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
         <option value="rxry">Right stick = RX / RY</option>
       </select></div>
       <div id="simStick" style="font-size:9px;color:var(--mt);line-height:1.5;background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:5px 7px">move a stick to test…</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;grid-gap:4px;gap:4px">
         <div></div><button class="btn" id="simUp" style="padding:6px">▲</button><div></div>
         <button class="btn" id="simLeft" style="padding:6px">◀</button>
         <button class="btn" id="simCtr" style="padding:6px" title="jump onto the aim point">◎</button>
@@ -323,21 +347,21 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
        operator scrolling mid-flight must not land on it by accident. -->
   <div class="sec"><div class="sh">⚙ CONNECTION</div><div class="sb">
     <button class="btn" id="setBtn">⚙ SETTINGS — PORTS &amp; CAMERA URLS</button>
-    <div id="setRows" style="display:none;flex-direction:column;gap:7px">
+    <div id="setRows" style="display:none;flex-direction:column">
       <div style="font-size:9px;color:var(--mt);line-height:1.4">Where this ground station looks for telemetry and video. Nothing here changes the ballistics or the aim solution.</div>
       <div class="f"><label>Telemetry source</label>
-        <div id="setSrc" style="display:flex;gap:4px">
+        <div id="setSrc" style="display:flex">
           <button class="btn" data-src="udp">UDP</button>
           <button class="btn" data-src="bluetooth">BLUETOOTH</button>
         </div>
       </div>
-      <div id="setBtRow" style="display:none;flex-direction:column;gap:5px">
+      <div id="setBtRow" style="display:none;flex-direction:column">
         <div class="f"><label>Bluetooth datalink</label><select id="setBtDev"></select></div>
         <div style="font-size:9px;color:var(--mt);line-height:1.4">Serial telemetry, as UniGCS uses. The link is exclusive — while this app holds it no other app on the ground station can read the aircraft, so it is relayed on to the QGC port below.</div>
       </div>
       <div class="f"><label>MAVLink listen port <span id="setMavD">—</span></label><input type="text" id="setMav" inputmode="numeric" autocomplete="off"></div>
       <div class="f"><label>QGC port <span id="setQgcD">—</span></label><input type="text" id="setQgc" inputmode="numeric" autocomplete="off"></div>
-      <div id="setCams" style="display:flex;flex-direction:column;gap:7px"></div>
+      <div id="setCams" style="display:flex;flex-direction:column"></div>
       <div id="setMsg" style="display:none;font-size:9px;line-height:1.4;border-radius:2px;padding:6px 8px"></div>
       <button class="btn btn-gn" id="setSave">✓ SAVE &amp; APPLY</button>
       <button class="btn" id="setReset">↺ RESTORE DEFAULTS</button>

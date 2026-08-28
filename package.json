@@ -5,8 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node tools/js-compat-check.js",
-    "test": "node tools/js-compat-check.js"
+    "check": "node tools/js-compat-check.js && node tools/css-compat-check.js",
+    "test": "node tools/js-compat-check.js && node tools/css-compat-check.js"
   },
   "keywords": [],
   "author": "",
