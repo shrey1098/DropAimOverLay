@@ -7,26 +7,10 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 
-/**
- * Raw RTSP conversation, bypassing ExoPlayer.
- *
- * ExoPlayer collapses every negotiation failure into "Source error", which told
- * us the camera refused us but not what it said. This speaks RTSP directly —
- * OPTIONS then DESCRIBE — and logs the complete response, so the camera's own
- * words decide the fix instead of another guess at the path.
- *
- * What the answers mean:
- *   200 + SDP  -> this path works; put it first in Config.cameras
- *   401        -> credentials needed; the WWW-Authenticate header names the scheme
- *   404 / 454  -> no such stream at this path
- *   406        -> path exists but the request was unacceptable — the Public and
- *                 Content-Type headers say what the camera will actually accept
- */
 object RtspProbe {
 
     private const val TAG = "RtspProbe"
 
-    /** Paths worth trying on a dual-sensor gimbal, commonest first. */
     private val PATHS = listOf(
         "/stream=0", "/stream=1", "/stream=2",
         "/main", "/sub",
@@ -46,10 +30,6 @@ object RtspProbe {
         val code: Int get() = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: -1
     }
 
-    /**
-     * Sweep the likely paths on each port and log what the camera answers.
-     * Blocking — call from a background thread.
-     */
     fun sweep(host: String, ports: List<Int> = listOf(554, 555)) {
         Log.i(TAG, "===== RTSP path sweep on $host =====")
         val working = mutableListOf<String>()
@@ -69,10 +49,7 @@ object RtspProbe {
                 Log.i(TAG, "$url -> ${r.statusLine} $note")
                 if (r.code == 200) {
                     working += url
-                    // Dump the WHOLE SDP. The codec matters, but so do a=control
-                    // (which media3 uses to build its SETUP URL) and a=fmtp
-                    // (sprop parameter sets) — those are where a stream that
-                    // describes fine can still fail to set up.
+
                     r.body.lines().filter { it.isNotBlank() }
                         .forEach { Log.i(TAG, "    $it") }
                 }
@@ -84,11 +61,6 @@ object RtspProbe {
             Log.i(TAG, "===== sweep finished: WORKING -> ${working.joinToString(", ")} =====")
     }
 
-    /**
-     * DESCRIBE just the configured URLs and log their SDP. Once the sweep has
-     * identified the right paths there is no reason to spend 40 s rediscovering
-     * them on every launch, but the SDP is still worth having in the log.
-     */
     fun check(urls: List<String>) {
         for (url in urls) {
             val hp = NetDiag.hostPort(url) ?: continue
@@ -100,11 +72,6 @@ object RtspProbe {
         }
     }
 
-    /**
-     * Is there a stream at this URL? A DESCRIBE returning 200 means the sensor
-     * exists on this aircraft; 454 means it does not. Used to decide which
-     * cameras to offer, so one build serves every airframe.
-     */
     fun describes(url: String): Boolean {
         val hp = NetDiag.hostPort(url) ?: return false
         return try { describe(hp.first, hp.second, url)?.code == 200 } catch (e: Exception) {
@@ -112,13 +79,12 @@ object RtspProbe {
         }
     }
 
-    /** OPTIONS then DESCRIBE against one URL. Returns the DESCRIBE response. */
     private fun describe(host: String, port: Int, url: String, timeoutMs: Int = 2500): Response? {
         Socket().use { s ->
             s.connect(InetSocketAddress(host, port), timeoutMs)
             s.soTimeout = timeoutMs
             val out = s.getOutputStream()
-            // ISO_8859_1 keeps one byte == one char, so Content-Length counts chars.
+
             val br = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.ISO_8859_1))
 
             send(out, "OPTIONS $url RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: DropAim\r\n\r\n")

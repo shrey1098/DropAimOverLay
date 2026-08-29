@@ -4,19 +4,11 @@ import android.content.Context
 import org.json.JSONObject
 import java.io.File
 
-/**
- * Local usage logbook.
- *
- * Everything is appended to a private JSON-lines file that survives offline for
- * as long as necessary. UploadWorker later posts whatever has not been sent yet
- * and advances a cursor; nothing is ever deleted by the upload, so a failed or
- * absent network never loses data.
- */
 object Metrics {
 
     private const val FILE = "metrics.jsonl"
-    private const val CURSOR = "metrics.cursor"      // how many lines have been uploaded
-    private const val MAX_BYTES = 4 * 1024 * 1024    // hard cap so it cannot grow forever
+    private const val CURSOR = "metrics.cursor"
+    private const val MAX_BYTES = 4 * 1024 * 1024
 
     @Synchronized
     fun log(ctx: Context, event: String, fields: Map<String, Any?> = emptyMap()) {
@@ -30,7 +22,7 @@ object Metrics {
             val f = File(ctx.filesDir, FILE)
             if (f.length() > MAX_BYTES) trim(ctx, f)
             f.appendText(o.toString() + "\n")
-        } catch (e: Exception) { /* logging must never break the app */ }
+        } catch (e: Exception) {  }
     }
 
     fun lines(ctx: Context): List<String> {
@@ -45,10 +37,8 @@ object Metrics {
         try { File(ctx.filesDir, CURSOR).writeText(n.toString()) } catch (e: Exception) {}
     }
 
-    /** Records not yet uploaded. */
     fun pending(ctx: Context): List<String> = lines(ctx).drop(cursor(ctx))
 
-    /** Drop the oldest half once the cap is hit, keeping the cursor consistent. */
     private fun trim(ctx: Context, f: File) {
         val all = f.readLines().filter { it.isNotBlank() }
         val keep = all.drop(all.size / 2)
@@ -60,7 +50,6 @@ object Metrics {
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
     } catch (e: Exception) { "?" }
 
-    /** Flatten to CSV — used only by the USB export path. */
     fun toCsv(ctx: Context): String {
         val rows = lines(ctx).mapNotNull { try { JSONObject(it) } catch (e: Exception) { null } }
         if (rows.isEmpty()) return "no records\n"

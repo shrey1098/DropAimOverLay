@@ -17,11 +17,6 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 
-/**
- * Single self-contained activity: starts the MAVLink + video + embedded server,
- * then points a full-screen WebView at http://127.0.0.1:3000/ where the tested
- * DropAim web app runs unchanged. No Node, no manual start.
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -37,9 +32,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // GATE 1: the APK must be the one we signed. A cracked build patches the
-        // licence check out; it cannot reproduce the signing certificate. Fails
-        // open when no fingerprint is configured — see Integrity.
         Integrity.logFingerprint(this)
         if (!Integrity.ok(this)) {
             Log.e(TAG, "refusing to start: signature mismatch")
@@ -47,9 +39,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // GATE 2: nothing starts on an unactivated device — no feed, no telemetry,
-        // no targeting. Re-checked every launch against this device's fingerprint,
-        // so a copied licence file does not travel to another GCS.
         if (!Licence.isActivated(this)) {
             startActivity(Intent(this, ActivationActivity::class.java))
             finish()
@@ -63,15 +52,8 @@ class MainActivity : AppCompatActivity() {
         sessionStart = System.currentTimeMillis()
         UploadWorker.schedule(applicationContext)
 
-        // Operator overrides (ports, camera URLs) before anything binds a socket
-        // or opens a stream, or the first session after a change would still run
-        // on the compiled-in defaults.
         Settings.load(this)
 
-        // Bluetooth telemetry is an install-time permission through Android 11,
-        // which covers the fielded ground stations (Android 9). On 12+ it has to
-        // be asked for, and without it the link silently never connects — so ask
-        // once, here, rather than letting it fail in the air.
         if (Settings.telemetrySource == Settings.SRC_BT &&
             android.os.Build.VERSION.SDK_INT >= 31) {
             val perm = "android.permission.BLUETOOTH_CONNECT"
@@ -81,10 +63,8 @@ class MainActivity : AppCompatActivity() {
 
         video = VideoPipe(applicationContext)
 
-        // Bring up the native services first, then the embedded server.
         mav.start()
-        // Port 3000 can already be taken once the aircraft stack is running on
-        // the GCS. Fall back rather than leaving the operator with a dead screen.
+
         for (p in Config.HTTP_PORT until Config.HTTP_PORT + 6) {
             try {
                 server = WebServer(applicationContext, mav, video, p).also { it.start(SOCKET_TIMEOUT, false) }
@@ -108,7 +88,7 @@ class MainActivity : AppCompatActivity() {
                     view: WebView?, req: android.webkit.WebResourceRequest?,
                     err: android.webkit.WebResourceError?
                 ) {
-                    // A single failed load used to leave a permanent error page.
+
                     val u = req?.url?.toString() ?: ""
                     if (req?.isForMainFrame == true) {
                         Log.w(TAG, "UI load failed ($u) — retrying")
@@ -123,9 +103,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        // ExoPlayer decodes RTSP into this TextureView. It sits *behind* the
-        // WebView (which paints the feed from /stream plus the overlay), and is
-        // only there so VideoPipe has a surface to grab frames from.
+
         videoSurface = TextureView(this)
 
         val root = FrameLayout(this)
@@ -134,17 +112,10 @@ class MainActivity : AppCompatActivity() {
         root.addView(webView, FrameLayout.LayoutParams(lp))
         setContentView(root)
 
-        // Start video once the surface is live, then load the UI.
         video.start(videoSurface)
         loadUiWhenServerReady()
     }
 
-    // ── bringing up the UI reliably ────────────────────────────────────
-    // The old code fired one loadUrl after a fixed 400 ms. With the aircraft
-    // connected there is more to do at startup (live MAVLink traffic, RTSP
-    // actually reachable), so the server was sometimes not listening yet and the
-    // WebView was left on a permanent error page. Wait for a real connection
-    // instead of guessing, and keep retrying.
     private fun loadUiWhenServerReady() {
         if (server == null) { showStartupError("No free port for the local UI server."); return }
         Thread {
@@ -178,7 +149,6 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ webView.loadUrl("http://127.0.0.1:$boundPort/") }, 700L * uiRetries)
     }
 
-    /** Never leave the operator staring at a blank screen — say what failed. */
     private fun showStartupError(reason: String) {
         val html = """
             <html><body style="background:#080c10;color:#b8cfe0;font-family:monospace;padding:24px">
@@ -192,11 +162,6 @@ class MainActivity : AppCompatActivity() {
         Log.e(TAG, "startup error: $reason")
     }
 
-    // ── GCS stick input ───────────────────────────────────────────────
-    // Physical sticks reach Android as joystick MotionEvents. Intercepting at
-    // dispatch level (rather than onGenericMotionEvent) means the WebView cannot
-    // swallow them first. Every common axis is forwarded so the web layer can
-    // map whichever ones this particular controller actually moves.
     override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
         if (ev.isFromSource(InputDevice.SOURCE_CLASS_JOYSTICK) && ev.action == MotionEvent.ACTION_MOVE) {
             forwardSticks(ev)
@@ -206,7 +171,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(ev: KeyEvent): Boolean {
-        // Hardware D-pad / shoulder buttons on the controller.
+
         val name = when (ev.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> "up"
             KeyEvent.KEYCODE_DPAD_DOWN -> "down"
@@ -246,8 +211,6 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread { try { webView.evaluateJavascript(code, null) } catch (e: Exception) {} }
     }
 
-    /** Log what Android can actually see — the fastest way to tell whether the
-     *  GCS exposes its sticks to the OS at all. */
     private fun logInputDevices() {
         try {
             val ids = InputDevice.getDeviceIds()
@@ -262,8 +225,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // Guarded: when the licence gate sends us straight to ActivationActivity
-        // none of these were ever created.
+
         if (sessionStart > 0L) {
             Metrics.log(this, "session_end",
                 mapOf("minutes" to (System.currentTimeMillis() - sessionStart) / 60000))
@@ -282,8 +244,6 @@ class MainActivity : AppCompatActivity() {
         private const val MAX_RETRIES = 5
         private const val DEADZONE = 0.08f
 
-        // Forwarded to JS by name. Which of these a given controller populates
-        // varies, so the sim maps them at runtime rather than assuming a layout.
         private val AXES = listOf(
             "x"    to MotionEvent.AXIS_X,      "y"    to MotionEvent.AXIS_Y,
             "z"    to MotionEvent.AXIS_Z,      "rz"   to MotionEvent.AXIS_RZ,

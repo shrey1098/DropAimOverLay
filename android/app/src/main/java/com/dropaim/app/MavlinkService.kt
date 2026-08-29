@@ -10,20 +10,13 @@ import kotlin.concurrent.thread
 import kotlin.math.hypot
 import kotlin.math.sqrt
 
-/**
- * Port of the MAVLink handling in server.js: bind UDP :14551, parse telemetry,
- * relay to/from QGroundControl (:14550 on loopback), and send flight-mode
- * commands (LOCK/UNLOCK/RTL). v1 and v2 frames; v2 truncated payloads are
- * zero-padded back to full length as the spec requires.
- */
 class MavlinkService {
     @Volatile private var running = false
     private var socket: DatagramSocket? = null
     private var qgcAddr = InetAddress.getByName("127.0.0.1")
-    /** Bumped on every restart so a listener thread whose socket has been closed
-     *  out from under it cannot keep running alongside its replacement. */
+
     @Volatile private var generation = 0
-    // Last non-QGC source we heard telemetry from — where we send commands back.
+
     @Volatile private var datalinkAddr: InetAddress? = null
     @Volatile private var datalinkPort: Int = 0
     private var txSeq = 0
@@ -34,11 +27,8 @@ class MavlinkService {
         17 to "BRAKE", 18 to "THROW", 20 to "GUIDED_NOGPS", 21 to "SMART_RTL"
     )
 
-    // ── Bluetooth transport ──────────────────────────────────────────
     private var bt: BluetoothLink? = null
-    /** Reassembly buffer for the serial stream. A MAVLink frame can be split
-     *  across two reads and two frames can arrive in one, so bytes are
-     *  accumulated and only whole frames consumed. */
+
     private val rx = ByteArray(4096)
     private var rxLen = 0
 
@@ -46,14 +36,6 @@ class MavlinkService {
         if (Settings.telemetrySource == Settings.SRC_BT) startBluetooth() else startUdp()
     }
 
-    /**
-     * Vehicle side over Bluetooth serial, QGC side still over UDP.
-     *
-     * The app keeps its place in the middle of the chain: it parses telemetry
-     * for the aim solution and relays the same bytes to the QGC port, so another
-     * ground-station app can still see the aircraft even though this app is
-     * holding the (point-to-point, exclusive) serial link.
-     */
     private fun startBluetooth() {
         if (running) return
         running = true
@@ -62,8 +44,6 @@ class MavlinkService {
         rxLen = 0
         Telemetry.mavlinkOk = false
 
-        // A plain sending socket for the QGC relay; also receives QGC's uplink,
-        // which is forwarded back down the serial link.
         val relay = try {
             DatagramSocket(null).apply { reuseAddress = true; soTimeout = 200
                 bind(java.net.InetSocketAddress(Settings.mavlinkPort)) }
@@ -74,8 +54,7 @@ class MavlinkService {
             onBytes = { buf, n ->
                 if (gen == generation) {
                     if (!Telemetry.mavlinkOk) { Telemetry.mavlinkOk = true; Log.i(TAG, "receiving over Bluetooth") }
-                    // Relay the raw stream on to QGC before parsing, so a parse
-                    // fault cannot cost the other app its telemetry.
+
                     try { relay?.send(DatagramPacket(buf, n, qgcAddr, qgcPort)) } catch (_: Exception) {}
                     feed(buf, n)
                 }
@@ -89,7 +68,6 @@ class MavlinkService {
         bt = link
         link.start(Settings.bluetoothAddress)
 
-        // QGC -> vehicle: whatever QGC sends goes straight down the serial link.
         if (relay != null) thread(name = "mavlink-qgc-uplink") {
             val buf = ByteArray(2048)
             while (running && gen == generation) {
@@ -104,9 +82,8 @@ class MavlinkService {
         }
     }
 
-    /** Accumulate stream bytes and parse only whole frames. */
     private fun feed(chunk: ByteArray, n: Int) {
-        if (rxLen + n > rx.size) rxLen = 0            // desynced: start clean
+        if (rxLen + n > rx.size) rxLen = 0
         System.arraycopy(chunk, 0, rx, rxLen, n)
         rxLen += n
         val used = parseFrames(rx, rxLen)
@@ -119,19 +96,13 @@ class MavlinkService {
     private fun startUdp() {
         if (running) return
         running = true
-        // Read the ports once, here, rather than on every packet: an operator
-        // saving new settings mid-flight must not leave this loop half on the
-        // old port and half on the new one. The restart below is what applies
-        // a change, atomically.
+
         val listenPort = Settings.mavlinkPort
         val qgcPort = Settings.qgcPort
         val gen = ++generation
         thread(name = "mavlink") {
             try {
-                // SO_REUSEADDR before bind: when the GCS is connected to the
-                // aircraft its own flight app is usually already bound to the
-                // standard MAVLink port. Without this the bind throws and we get
-                // no telemetry at all for the rest of the session.
+
                 val s = DatagramSocket(null).apply {
                     reuseAddress = true
                     bind(java.net.InetSocketAddress(listenPort))
@@ -145,16 +116,16 @@ class MavlinkService {
                     val data = pkt.data.copyOfRange(0, pkt.length)
                     val fromQgc = pkt.port == qgcPort && pkt.address.isLoopbackAddress
                     if (fromQgc) {
-                        // Uplink: QGC -> vehicle. Pass straight back to the datalink.
+
                         val a = datalinkAddr; val p = datalinkPort
                         if (a != null) s.send(DatagramPacket(data, data.size, a, p))
                         continue
                     }
-                    // Downlink: datalink -> us. Parse, then relay to QGC.
+
                     datalinkAddr = pkt.address; datalinkPort = pkt.port
                     if (!Telemetry.mavlinkOk) { Telemetry.mavlinkOk = true; Log.i(TAG, "receiving from ${pkt.address}:${pkt.port}") }
                     s.send(DatagramPacket(data, data.size, qgcAddr, qgcPort))
-                    parseFrames(data, data.size)   // a datagram is whole: no remainder
+                    parseFrames(data, data.size)
                 }
             } catch (e: java.net.BindException) {
                 Log.e(TAG, "UDP :$listenPort is already held by another app " +
@@ -174,59 +145,40 @@ class MavlinkService {
         socket?.close()
     }
 
-    /** Why the Bluetooth link is down, for the UI. Empty when it is up. */
     @Volatile var btError = ""; private set
 
-    /** What the operator should be told the telemetry link is doing. */
     val linkDescription: String
         get() = if (Settings.telemetrySource == Settings.SRC_BT)
             "Bluetooth" + (bt?.deviceName?.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "") +
             (if (btError.isNotEmpty()) " — $btError" else "")
         else "UDP :${Settings.mavlinkPort}"
 
-    /**
-     * Rebind on the ports currently in Settings. Called after the operator saves
-     * a different port — the alternative is telling them to force-close the app
-     * on an aircraft that is powered up and waiting. Blocks briefly, so call it
-     * off the main thread (the HTTP handler already runs on its own).
-     */
     fun restart() {
         Log.i(TAG, "restarting on :${Settings.mavlinkPort} -> QGC :${Settings.qgcPort}")
         stop()
-        // The old socket is closed above, which wakes its receive(); give it a
-        // moment to unwind before rebinding the port it was holding.
+
         Thread.sleep(200)
         Telemetry.mavlinkOk = false
         datalinkAddr = null; datalinkPort = 0
         start()
     }
 
-    /** LOCK->BRAKE(17), UNLOCK->LOITER(5), RTL(6). Returns false if no link yet. */
     fun sendMode(name: String): Boolean {
         val cm = when (name.uppercase()) {
             "BRAKE" -> 17; "LOITER" -> 5; "RTL" -> 6; else -> return false
         }
         val pkt = buildDoSetMode(cm)
 
-        // Commands go back the way telemetry came. On a serial link that is the
-        // same socket, and it is reliable — unlike UDP it does not need the
-        // duplicate send below.
         val link = bt
         if (link != null) return link.write(pkt)
 
         val a = datalinkAddr ?: return false
-        // UDP is lossy; send twice so a dropped mode command doesn't silently no-op.
+
         socket?.send(DatagramPacket(pkt, pkt.size, a, datalinkPort))
         socket?.send(DatagramPacket(pkt, pkt.size, a, datalinkPort))
         return true
     }
 
-    // ── parsing ───────────────────────────────────────────────────
-    /**
-     * Parse whole MAVLink frames out of [bytes] and return how many bytes were
-     * consumed. A datagram caller can ignore the result; a stream caller must
-     * keep the remainder, because the tail is usually half a frame.
-     */
     private fun parseFrames(bytes: ByteArray, len: Int): Int {
         var i = 0
         while (i < len - 8) {
@@ -236,33 +188,31 @@ class MavlinkService {
             val pl = bytes[i + 1].toInt() and 0xFF
             val hl = if (v2) 10 else 6
             val tl = hl + pl + 2
-            if (i + tl > len) break        // incomplete: leave it for the next read
+            if (i + tl > len) break
             val id = if (v2)
                 (bytes[i + 7].toInt() and 0xFF) or ((bytes[i + 8].toInt() and 0xFF) shl 8) or ((bytes[i + 9].toInt() and 0xFF) shl 16)
             else bytes[i + 5].toInt() and 0xFF
             val sysid = if (v2) bytes[i + 5].toInt() and 0xFF else bytes[i + 3].toInt() and 0xFF
 
-            // v2 truncates trailing zero payload bytes; pad back to 28 so fixed
-            // offsets read their spec-defined zero.
             val p = ByteArray(28)
             val n = minOf(pl, 28)
             System.arraycopy(bytes, i + hl, p, 0, n)
             val bb = ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN)
             try {
                 when {
-                    id == 0 && pl >= 6 -> {                       // HEARTBEAT
+                    id == 0 && pl >= 6 -> {
                         if (sysid == Config.TARGET_SYS) {
                             val cm = bb.getInt(0).toLong() and 0xFFFFFFFFL
                             Telemetry.mode = copterModes[cm.toInt()] ?: "MODE$cm"
                         }
                     }
-                    id == 30 && pl >= 16 -> {                     // ATTITUDE
+                    id == 30 && pl >= 16 -> {
                         Telemetry.roll = bb.getFloat(4) * 180.0 / Math.PI
                         Telemetry.pitch = bb.getFloat(8) * 180.0 / Math.PI
                         var y = bb.getFloat(12) * 180.0 / Math.PI
                         Telemetry.yaw = if (y < 0) y + 360 else y
                     }
-                    id == 33 && pl >= 18 -> {                     // GLOBAL_POSITION_INT
+                    id == 33 && pl >= 18 -> {
                         Telemetry.lat = bb.getInt(4) * 1e-7
                         Telemetry.lon = bb.getInt(8) * 1e-7
                         Telemetry.altMSL = bb.getInt(12) * 1e-3
@@ -273,30 +223,28 @@ class MavlinkService {
                         Telemetry.heading = (bb.getShort(26).toInt() and 0xFFFF) * 0.01
                         Telemetry.groundspeed = hypot(Telemetry.vx, Telemetry.vy)
                     }
-                    id == 168 && pl >= 5 -> {                     // WIND
+                    id == 168 && pl >= 5 -> {
                         var d = bb.getFloat(0).toDouble() % 360.0
                         if (d < 0) d += 360.0
                         Telemetry.windDir = d
                         Telemetry.windSpeed = bb.getFloat(4).toDouble()
                     }
                 }
-            } catch (_: Exception) { /* short/garbled frame — skip */ }
+            } catch (_: Exception) {  }
             i += tl
         }
-        // Everything before i is a whole frame, or garbage already skipped. On a
-        // stream the caller keeps the rest — it is usually half a frame.
+
         return i
     }
 
-    // ── COMMAND_LONG (msgid 76) DO_SET_MODE, CRC-16/MCRF4XX + crc_extra ──
     private fun buildDoSetMode(customMode: Int): ByteArray {
         val payload = ByteBuffer.allocate(33).order(ByteOrder.LITTLE_ENDIAN)
-        payload.putFloat(0, 1f)                    // param1 = base_mode = CUSTOM_MODE_ENABLED
-        payload.putFloat(4, customMode.toFloat())  // param2 = custom_mode
-        payload.putShort(28, 176)                  // command = MAV_CMD_DO_SET_MODE
+        payload.putFloat(0, 1f)
+        payload.putFloat(4, customMode.toFloat())
+        payload.putShort(28, 176)
         payload.put(30, Config.TARGET_SYS.toByte())
         payload.put(31, Config.TARGET_COMP.toByte())
-        payload.put(32, 0)                         // confirmation
+        payload.put(32, 0)
         val pl = payload.array()
 
         val hdr = ByteArray(10)
@@ -308,7 +256,7 @@ class MavlinkService {
         var c = 0xFFFF
         for (k in 1..9) c = crcAccum(hdr[k].toInt() and 0xFF, c)
         for (b in pl) c = crcAccum(b.toInt() and 0xFF, c)
-        c = crcAccum(CRC_EXTRA_COMMAND_LONG, c)   // msgid 76 crc_extra
+        c = crcAccum(CRC_EXTRA_COMMAND_LONG, c)
 
         val out = ByteArray(hdr.size + pl.size + 2)
         System.arraycopy(hdr, 0, out, 0, hdr.size)

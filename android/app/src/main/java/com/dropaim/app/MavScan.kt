@@ -12,47 +12,20 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 
-/**
- * Find where this ground station's MAVLink actually is.
- *
- * PASSIVE by default: [run] only opens listening sockets and reads /proc. It
- * transmits nothing. [probe] does transmit, and is only reached from a button
- * that says so.
- *
- * Background: the SIYI handheld decodes MAVLink in its own app but exposes no
- * datalink or port setting, so there is nothing to read the answer off. The
- * first pass of this scan established that no MAVLink is broadcast on any of
- * eleven usual ports, and that no app-owned socket (uid >= 10000) holds a UDP
- * port at all — only the Android radio, mDNS and DNS system uids.
- *
- * That ruled out the easy explanations and pointed at the thing the first
- * version could not see: a socket is only half described by its LOCAL address.
- * A UDP socket connected to a peer, or a TCP connection, names the far end in
- * /proc too — and a far end of 192.168.144.11 or .12 is the datalink. So this
- * version reads tcp and tcp6 as well as udp and udp6, keeps the remote address,
- * and groups the system noise so the two or three interesting rows are not
- * buried under thirty consecutive radio ports.
- */
 object MavScan {
 
     private const val TAG = "MavScan"
 
-    /** SIYI's documented MAVLink UDP broadcast, the QGC and Skydroid
-     *  conventions, and the common alternates on ArduPilot ground stations. */
     val PORTS = listOf(19856, 19857, 14550, 14551, 14552, 14553, 14555, 14556, 14445, 15550, 18570)
 
-    /** Kept under NanoHTTPD's socket timeout so the HTTP response is not cut off. */
     const val LISTEN_MS = 6000L
 
-    /** Where a datalink lives on a SIYI/Skydroid style network. */
     private val PROBE_HOSTS = listOf("192.168.144.11", "192.168.144.12", "192.168.144.255")
     private val PROBE_PORTS = listOf(19856, 14550, 14551, 14555)
     private const val PROBE_WAIT_MS = 3000L
 
-    // ── PASSIVE ──────────────────────────────────────────────────────
     fun run(ctx: Context): JSONObject {
-        // Android drops broadcast and multicast on Wi-Fi unless something holds
-        // this lock.
+
         var lock: WifiManager.MulticastLock? = null
         try {
             val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
@@ -89,18 +62,6 @@ object MavScan {
         return out
     }
 
-    /**
-     * Paired Bluetooth devices, and whether any of them offers a serial port.
-     *
-     * Not every ground station puts telemetry on IP. UniGCS on the SIYI handheld
-     * shows full MAVLink with its Datalink set to "Bluetooth" at 57600, which is
-     * a Bluetooth serial (SPP, RFCOMM) link — invisible to every socket and port
-     * this scan was originally built around. A paired device advertising the SPP
-     * UUID is where the telemetry is on such a machine.
-     *
-     * Read-only: enumerates what is already paired. It pairs nothing, connects
-     * to nothing and sends nothing.
-     */
     private fun bluetooth(): JSONObject {
         val out = JSONObject()
         try {
@@ -109,8 +70,7 @@ object MavScan {
             out.put("available", true).put("enabled", adapter.isEnabled)
             val arr = JSONArray()
             for (dev in adapter.bondedDevices.orEmpty()) {
-                // SPP: 00001101-… is the serial port profile every telemetry
-                // bridge of this kind advertises.
+
                 val uuids = dev.uuids?.map { it.uuid.toString() } ?: emptyList()
                 arr.put(JSONObject()
                     .put("name", dev.name ?: "(unnamed)")
@@ -121,8 +81,7 @@ object MavScan {
             }
             out.put("paired", arr)
         } catch (e: SecurityException) {
-            // Android 12+ needs BLUETOOTH_CONNECT granted at runtime. The field
-            // devices are Android 9, where it is granted at install.
+
             out.put("available", true).put("error", "permission not granted: ${e.message}")
         } catch (e: Exception) {
             out.put("available", false).put("error", e.message ?: e.javaClass.simpleName)
@@ -130,14 +89,6 @@ object MavScan {
         return out
     }
 
-    /**
-     * Every socket on the device, from /proc/net/{udp,udp6,tcp,tcp6}.
-     *
-     * Columns: sl local_address rem_address st tx:rx tr:when retrnsmt uid ...
-     * Addresses are HEX ip:port; the IPv4 word and each IPv6 32-bit word are
-     * little-endian. `st` is the TCP state (01 established, 0A listen); for UDP
-     * it carries no useful meaning and is ignored.
-     */
     private fun procNet(): JSONArray {
         val out = JSONArray()
         for ((path, proto) in listOf(
@@ -156,8 +107,7 @@ object MavScan {
                     out.put(JSONObject()
                         .put("proto", proto)
                         .put("localAddr", ip(lp[0])).put("localPort", localPort)
-                        // A zero remote is an unconnected listener. A non-zero one
-                        // names the far end, which is the whole point of this pass.
+
                         .put("remoteAddr", if (remotePort == 0) "" else ip(rp[0]))
                         .put("remotePort", remotePort)
                         .put("state", c[3])
@@ -168,14 +118,11 @@ object MavScan {
         return out
     }
 
-    /** Hex address -> dotted quad, or a readable IPv6. IPv4-mapped v6 is
-     *  reported as the v4 address it really is, since that is what the operator
-     *  needs to compare against the datalink's subnet. */
     private fun ip(hex: String): String = try {
         when (hex.length) {
             8 -> v4(hex)
             32 -> {
-                // ::ffff:a.b.c.d — the first three words are 0,0,0000FFFF.
+
                 if (hex.startsWith("0000000000000000FFFF0000", true)) v4(hex.substring(24))
                 else if (hex.all { it == '0' }) "::"
                 else (0 until 4).joinToString(":") { w ->
@@ -234,22 +181,6 @@ object MavScan {
         return JSONArray(results.sortedByDescending { it.optInt("packets", 0) })
     }
 
-    // ── ACTIVE ───────────────────────────────────────────────────────
-    /**
-     * Say hello to the datalink and see if it answers.
-     *
-     * TRANSMITS. Only called from a button that says so.
-     *
-     * Many MAVLink UDP endpoints are servers: they send nothing until a client
-     * speaks first, then stream telemetry back to whatever address and port that
-     * client used. If SIYI's ground unit works that way, the reason we hear
-     * silence is simply that we have never introduced ourselves — and the fix is
-     * for the app to speak first, not to find a magic port.
-     *
-     * What is sent is one standard GCS HEARTBEAT per endpoint, byte for byte
-     * what QGroundControl emits once a second. It commands nothing, arms
-     * nothing, and changes no mode.
-     */
     fun probe(): JSONObject {
         val hb = heartbeat()
         val results = JSONArray()
@@ -259,12 +190,11 @@ object MavScan {
             try {
                 sock = DatagramSocket(null).apply {
                     reuseAddress = true; broadcast = true; soTimeout = 300
-                    bind(InetSocketAddress(0))          // ephemeral: we are the client
+                    bind(InetSocketAddress(0))
                 }
                 val addr = InetAddress.getByName(host)
                 row.put("localPort", sock.localPort)
-                // Twice, ~1s apart: some endpoints only register a client after a
-                // second heartbeat, and UDP is lossy.
+
                 sock.send(DatagramPacket(hb, hb.size, addr, port))
                 var packets = 0
                 val sources = LinkedHashSet<String>()
@@ -298,18 +228,17 @@ object MavScan {
         return JSONObject().put("probed", results).put("waitMs", PROBE_WAIT_MS)
     }
 
-    /** A standard GCS HEARTBEAT (msgid 0), MAVLink v2, CRC-16/MCRF4XX. */
     private fun heartbeat(): ByteArray {
-        val pl = ByteArray(9)                       // custom_mode(4)=0
-        pl[4] = 6                                   // type = MAV_TYPE_GCS
-        pl[5] = 8                                   // autopilot = MAV_AUTOPILOT_INVALID
-        pl[6] = 0                                   // base_mode
-        pl[7] = 4                                   // system_status = MAV_STATE_ACTIVE
-        pl[8] = 3                                   // mavlink_version
+        val pl = ByteArray(9)
+        pl[4] = 6
+        pl[5] = 8
+        pl[6] = 0
+        pl[7] = 4
+        pl[8] = 3
         val hdr = ByteArray(10)
         hdr[0] = 0xFD.toByte(); hdr[1] = pl.size.toByte()
         hdr[5] = Config.GCS_SYS.toByte(); hdr[6] = Config.GCS_COMP.toByte()
-        hdr[7] = 0; hdr[8] = 0; hdr[9] = 0          // msgid 0
+        hdr[7] = 0; hdr[8] = 0; hdr[9] = 0
         var c = 0xFFFF
         for (k in 1..9) c = crc(hdr[k].toInt() and 0xFF, c)
         for (b in pl) c = crc(b.toInt() and 0xFF, c)

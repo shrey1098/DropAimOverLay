@@ -2,10 +2,6 @@ package com.dropaim.app
 
 import org.json.JSONObject
 
-/**
- * Thread-safe latest-vehicle-state holder. Fields and JSON keys match exactly
- * what public/index.html expects on the /telemetry WebSocket.
- */
 object Telemetry {
     @Volatile var roll = 0.0
     @Volatile var pitch = 0.0
@@ -25,9 +21,6 @@ object Telemetry {
 
     @Volatile var mavlinkOk = false
 
-    // Video liveness has exactly one owner: the frame publisher. This used to be
-    // a second @Volatile field that nothing ever wrote, so the UI was told the
-    // feed was dead even while frames were flowing.
     val videoOk: Boolean get() = FrameBus.connected
 
     fun toJson(): String {

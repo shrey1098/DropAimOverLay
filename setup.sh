@@ -1,6 +1,4 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# DROP·AIM — One-time setup
-# Run: bash setup.sh
 
 echo "Installing dependencies..."
 pkg update -y

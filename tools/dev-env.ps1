@@ -1,20 +1,10 @@
-# DropAim — set up JAVA_HOME and adb for command-line builds on Windows.
-#
-# Android Studio bundles its own JDK and SDK but puts neither on PATH, so
-# `gradlew` reports "JAVA_HOME is not set" and `adb` is not recognised.
-#
-# For this window only:
-#   . .\tools\dev-env.ps1
-#
-# To set it permanently for your user (do this once, then reopen PowerShell):
-#   . .\tools\dev-env.ps1 -Persist
+
 
 param([switch]$Persist)
 
-# ── JDK: Android Studio's bundled runtime ─────────────────────────────
 $jdkCandidates = @(
-    "$env:ProgramFiles\Android\Android Studio\jbr",      # Studio 2022.2+
-    "$env:ProgramFiles\Android\Android Studio\jre",      # older Studio
+    "$env:ProgramFiles\Android\Android Studio\jbr",
+    "$env:ProgramFiles\Android\Android Studio\jre",
     "${env:ProgramFiles(x86)}\Android\Android Studio\jbr",
     "$env:LOCALAPPDATA\Programs\Android Studio\jbr"
 )
@@ -29,7 +19,6 @@ if ($jdk) {
     Write-Host "and note the 'Gradle JDK' path, then set JAVA_HOME to it by hand." -ForegroundColor Red
 }
 
-# ── SDK platform-tools: adb ───────────────────────────────────────────
 $sdkCandidates = @(
     "$env:LOCALAPPDATA\Android\Sdk",
     "$env:USERPROFILE\AppData\Local\Android\Sdk",

@@ -13,11 +13,6 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 
-/**
- * The lock screen. Until a valid code is entered the app does nothing else —
- * no feed, no telemetry, no targeting. Built in code rather than XML to keep it
- * self-contained.
- */
 class ActivationActivity : AppCompatActivity() {
 
     override fun onCreate(b: Bundle?) {
@@ -96,7 +91,6 @@ class ActivationActivity : AppCompatActivity() {
         setContentView(sv)
     }
 
-    // Locked means locked: back does not get past this screen.
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { finishAffinity() }
 }

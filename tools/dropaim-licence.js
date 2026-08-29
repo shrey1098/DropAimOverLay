@@ -1,28 +1,5 @@
 #!/usr/bin/env node
-/*
- * DROP·AIM — Licence issuing tool  (KEEP THIS PRIVATE)
- * ====================================================
- * This is the only thing that can create activation codes. It must live on YOUR
- * PC and nowhere else. The private key it generates never goes near the app.
- *
- *   node dropaim-licence.js init
- *       Creates a signing keypair. Writes:
- *         dropaim-private.pem   <- SECRET. Back it up. Never share, never commit.
- *         dropaim-public.txt    <- paste this into Licence.kt (PUBLIC_KEY_B64)
- *       Run ONCE. Re-running makes a NEW key that invalidates every code you
- *       have already issued, so it refuses to overwrite an existing key.
- *
- *   node dropaim-licence.js issue <DEVICE-ID> [--unit "51 Fd Regt"]
- *       Signs that device id and prints the activation code to send back.
- *       Also appends to issued-licences.csv so you keep a register.
- *
- *   node dropaim-licence.js verify <DEVICE-ID> <CODE>
- *       Checks a code locally — same maths the app performs.
- *
- * Crypto: ECDSA over NIST P-256 with SHA-256. Chosen because Android has
- * supported it natively since API 23 (no extra library on the device), and it
- * is asymmetric: the app can only VERIFY, never MINT.
- */
+
 'use strict';
 const crypto = require('crypto');
 const fs = require('fs');
@@ -33,8 +10,6 @@ const PRIV = path.join(DIR, 'dropaim-private.pem');
 const PUB  = path.join(DIR, 'dropaim-public.txt');
 const REG  = path.join(DIR, 'issued-licences.csv');
 
-// The exact bytes that get signed. The app rebuilds this string and verifies
-// against it, so the two MUST stay identical.
 const payload = deviceId => `DROPAIM-V1:${deviceId.trim().toUpperCase()}`;
 
 function init() {

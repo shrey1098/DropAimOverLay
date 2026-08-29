@@ -18,69 +18,43 @@
 html,body{width:100%;height:100%;background:var(--bg);color:var(--tx);font-family:'Share Tech Mono',monospace;font-size:13px;overflow:hidden}
 body::after{content:'';position:fixed;top:0;right:0;bottom:0;left:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
 
-/* Layout: video left, controls right — at EVERY width.
-   This used to stack into video-on-top / controls-below under 600px. That put
-   the operator's controls somewhere different depending on the device, and cut
-   the feed down to a strip exactly on the screens where it was already
-   tightest. The panel now SCALES and the layout never changes shape, so the
-   app is laid out identically on a small controller and a 1080p ground
-   station — muscle memory carries across both.
-   Stepped with media queries rather than clamp(): clamp() needs Chrome 79 and
-   the oldest ground station's WebView is older, which made the browser DROP the
-   whole declaration. The grid then fell back to one implicit column and the
-   video pane — whose children are all absolutely positioned — collapsed to zero
-   height, leaving the parameter panel filling the screen. Never narrower than
-   170px (a slider stops being usable below that), never wider than the 320px
-   the panel was designed at. */
 .layout{display:grid;grid-template-columns:1fr 320px;height:100vh;overflow:hidden}
 @media(max-width:1230px){.layout{grid-template-columns:1fr 280px}}
 @media(max-width:1000px){.layout{grid-template-columns:1fr 240px}}
 @media(max-width:820px){ .layout{grid-template-columns:1fr 200px}}
 @media(max-width:650px){ .layout{grid-template-columns:1fr 170px}}
-/* The narrow-screen tuning lives at the END of this stylesheet — it overrides
-   rules declared further down, and at equal specificity the later one wins. */
 
-/* Video pane */
 .vpane{position:relative;background:#000;overflow:hidden}
 canvas#main{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;z-index:1;cursor:crosshair;touch-action:none}
-/* pointer-events:none is load-bearing — this sits above the canvas, so without
-   it the "NO VIDEO" panel swallows every tap and the target cannot be marked. */
+
 .nosig{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2;color:var(--mt);font-size:11px;letter-spacing:2px;pointer-events:none}
 .nosig .icon{font-size:40px;opacity:.3}
 #nosigWhy{max-width:70%;text-align:center;word-break:break-all;line-height:1.5}
 .nosig.hide{display:none}
 
-/* HUD */
 .hud{position:absolute;z-index:20;pointer-events:none;font-size:11px;letter-spacing:1px}
 .hud.tl{top:10px;left:10px}.hud.tr{top:10px;right:10px;text-align:right}
 .hud.bl{bottom:10px;left:10px}.hud.br{bottom:10px;right:10px;text-align:right}
 .hud .lbl{color:var(--mt)}.hud .val{color:var(--ac)}.hud .vgn{color:var(--gn)}.hud .vgd{color:var(--gd)}
 
-/* Status bar */
-/* wrap: the link pills are the one thing that must never be clipped — a VIDEO
-   or MAVLINK pill half off the edge is the same as not having it. */
 .sbar{display:flex;flex-wrap:wrap;align-items:center;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--bd);font-size:9px;letter-spacing:1px;flex-shrink:0}
 .pill{padding:2px 7px;border:1px solid;font-size:9px;border-radius:1px}
 .pill.ok{border-color:var(--gn);color:var(--gn)}.pill.bad{border-color:var(--rd);color:var(--rd);animation:blink 1s step-end infinite}
 .pill.warn{border-color:var(--gd);color:var(--gd)}
 @keyframes blink{50%{opacity:.3}}
 
-/* Sidebar */
 .side{background:var(--sf);border-left:1px solid var(--bd);overflow-y:auto;display:flex;flex-direction:column}
 .side::-webkit-scrollbar{width:3px}.side::-webkit-scrollbar-thumb{background:var(--bd)}
 
-/* Sections */
 .sec{border-bottom:1px solid var(--bd);flex-shrink:0}
 .sh{background:rgba(0,229,255,.05);padding:6px 10px;font-size:9px;letter-spacing:2px;color:var(--ac);border-bottom:1px solid var(--bd)}
 .sb{padding:8px 10px;display:flex;flex-direction:column}
 
-/* Telemetry grid */
 .tg{display:grid;grid-template-columns:1fr 1fr;grid-gap:5px;gap:5px}
 .tc{background:var(--bg);border:1px solid var(--bd);border-radius:2px;padding:4px 7px}
 .tc .tl{font-size:8px;color:var(--mt);letter-spacing:1px}
 .tc .tv{font-family:'Orbitron',sans-serif;font-size:13px;color:var(--gn);line-height:1.1}
 
-/* Fields */
 .f{display:flex;flex-direction:column}
 .f label{font-size:9px;color:var(--mt);letter-spacing:1px;display:flex;justify-content:space-between}
 .f label span{color:var(--ac)}
@@ -89,10 +63,6 @@ input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--bd)
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--ac);margin-top:-8px;box-shadow:0 0 6px var(--ac)}
 select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:11px;padding:5px 7px;width:100%;border-radius:1px;outline:none}
 
-/* Flexbox gap needs Chrome 84 and the oldest ground station is older, so the
-   spacing is done with margins instead — identical where gap works, and the
-   difference matters: without it LOCK, UNLOCK and RTL sit edge to edge, which
-   is a mis-tap on a touchscreen. */
 .sb > * + *{margin-top:7px}
 .f > * + *{margin-top:3px}
 .nosig > * + *{margin-top:10px}
@@ -103,38 +73,26 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 #simRows > * + *, #setRows > * + *, #setCams > * + *{margin-top:7px}
 #setBtRow > * + *, #simSatRow > * + *{margin-top:5px}
 
-/* Buttons */
 .btn{width:100%;padding:8px;background:transparent;border:1px solid var(--ac);color:var(--ac);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border-radius:1px;transition:all .15s;touch-action:manipulation}
 .btn:active{background:var(--ac);color:var(--bg)}
 .btn-gn{border-color:var(--gn);color:var(--gn)}.btn-gn:active{background:var(--gn)}
 .btn-rd{border-color:var(--rd);color:var(--rd)}.btn-rd:active{background:var(--rd)}
 .btn-gd{border-color:var(--gd);color:var(--gd);font-size:9px}.btn-gd:active{background:var(--gd);color:var(--bg)}
 
-/* Aim result */
 .aimr{background:rgba(0,255,136,.05);border:1px solid rgba(0,255,136,.3);border-radius:2px;padding:7px 9px;font-size:10px;color:var(--gn);line-height:1.5;display:none}
 .aimr.show{display:block}
 
-/* Banner */
 .banner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;background:rgba(8,12,16,.85);border:1px solid var(--ac);padding:10px 20px;font-size:11px;color:var(--ac);letter-spacing:2px;text-align:center;pointer-events:none;transition:opacity .5s}
 .banner.hide{opacity:0}
 
-/* Horizon */
 #hzCanvas{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none}
 
-/* ── Narrow screens ───────────────────────────────────────────────
-   Last in the file on purpose: these override rules declared above, and at
-   equal specificity the later declaration wins.
-   Below ~650px the control panel is already pinned at its 170px floor, so
-   what gives way here is padding and density — never the side-by-side
-   layout. The video pane is narrow at these widths, so the corner HUD
-   readouts are shrunk too, otherwise the left and right blocks collide over
-   the middle of the picture. */
 @media(max-width:700px){
   .sh{padding:5px 7px;letter-spacing:1px}
   .sb{padding:6px 7px}
   .sb > * + *{margin-top:5px}
   .sbar{padding:5px 7px}
-  .tg{grid-template-columns:1fr}      /* two columns cannot fit 170px */
+  .tg{grid-template-columns:1fr}
   .tc{padding:3px 6px}
   .tc .tv{font-size:12px}
   .hud{font-size:9px;letter-spacing:0}
@@ -146,15 +104,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 </style>
 </head>
 <body>
-<!-- FIRST script in the document, and deliberately written in old-school ES5.
-     A syntax error in a later <script> takes that entire block out at parse
-     time: every handler in it silently never attaches. In the field that looks
-     like "the settings button does nothing and the simulator won't draw", with
-     no hint that the cause is one unsupported character. There is no logcat on
-     a ground station, so the app has to say so itself.
-     window.onerror fires for parse errors in scripts loaded AFTER the handler
-     is installed, which is the whole reason this sits at the top. Keep it ES5:
-     if this block cannot parse, nothing can report that it could not. -->
+
 <script>
 (function(){
   var box=null;
@@ -181,7 +131,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   }
   window.onerror=function(msg,src,line,col){
     show(msg+'  ['+String(src).split('/').pop()+':'+line+':'+col+']');
-    return false;               // let it reach the console too
+    return false;
   };
   window.addEventListener('unhandledrejection',function(e){
     var r=e.reason;
@@ -192,7 +142,6 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 </script>
 <div class="layout">
 
-<!-- ══ VIDEO PANE ══ -->
 <div class="vpane">
   <canvas id="main"></canvas>
   <div class="nosig" id="nosig"><div class="icon">📡</div><div>NO VIDEO</div><div style="font-size:9px;color:var(--mt)" id="nosigWhy">Waiting for camera stream...</div></div>
@@ -217,7 +166,6 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   <div class="banner" id="banner">TAP VIDEO TO MARK TARGET</div>
 </div>
 
-<!-- ══ SIDEBAR ══ -->
 <div class="side">
   <div class="sbar">
     <span class="pill bad" id="sVid">VIDEO ✕</span>
@@ -285,8 +233,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">📷 CAMERA OFFSET</div><div class="sb">
-    <!-- step 0.01: a sensor's aim scale is 1/tan(HFOV/2) and lands on
-         fractions (32° -> 3.49). Day's 22 is unchanged and still reachable. -->
+
     <div class="f"><label>Zoom <span id="zmL">22×</span></label><input type="range" id="zoom" min="0.5" max="30" value="22" step="0.01"></div>
     <div class="f"><label>Forward <span id="cfL">+0.15 m</span></label><input type="range" id="cf" min="-0.5" max="0.5" value="0.15" step="0.01"></div>
     <div class="f"><label>Right <span id="crL">-0.50 m</span></label><input type="range" id="cr" min="-0.5" max="0.5" value="-0.5" step="0.01"></div>
@@ -342,9 +289,6 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     </div>
   </div></div>
 
-  <!-- The values that differ between ground stations and airframes. Kept behind
-       a button and last in the panel: it is set once per installation, and an
-       operator scrolling mid-flight must not land on it by accident. -->
   <div class="sec"><div class="sh">⚙ CONNECTION</div><div class="sb">
     <button class="btn" id="setBtn">⚙ SETTINGS — PORTS &amp; CAMERA URLS</button>
     <div id="setRows" style="display:none;flex-direction:column">
@@ -381,21 +325,15 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
 <script>
 'use strict';
 
-// ══════════════════════════════════════════════════════════════════
-// CONSTANTS
-// ══════════════════════════════════════════════════════════════════
 const G  = 9.80665;
-const DT = 0.005; // RK4 timestep (seconds)
+const DT = 0.005;
 const PI = Math.PI;
-const ALIGN_LOCK_M = 0.5; // 🔵–🟢 offset (metres) under which LOCK is allowed; tune to taste
+const ALIGN_LOCK_M = 0.5;
 
-// ══════════════════════════════════════════════════════════════════
-// STATE
-// ══════════════════════════════════════════════════════════════════
-let targetMark      = null; // {x,y} canvas pixels
-let targetMarkVideo = null; // {x,y} video pixels (for tracker)
-let aimPoint        = null; // {x,y} canvas pixels
-let result          = null; // physics result
+let targetMark      = null;
+let targetMarkVideo = null;
+let aimPoint        = null;
+let result          = null;
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -403,12 +341,9 @@ let telemetry       = {
   videoOk:false, mavlinkOk:false,
 };
 
-// ══════════════════════════════════════════════════════════════════
-// CANVAS SETUP
-// ══════════════════════════════════════════════════════════════════
 const MC  = document.getElementById('main');
 const ctx = MC.getContext('2d', { willReadFrequently: true });
-const VC  = document.createElement('canvas'); // offscreen for video
+const VC  = document.createElement('canvas');
 const vx  = VC.getContext('2d', { willReadFrequently: true });
 
 function resize() {
@@ -419,9 +354,6 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// ══════════════════════════════════════════════════════════════════
-// MJPEG STREAM → CANVAS
-// ══════════════════════════════════════════════════════════════════
 async function startStream() {
   try {
     const res = await fetch('/stream');
@@ -432,10 +364,6 @@ async function startStream() {
     const cat = (a,b) => { const c=new Uint8Array(a.length+b.length); c.set(a); c.set(b,a.length); return c; };
     const find = (a,b0,b1,from) => { for(let i=from;i<a.length-1;i++) if(a[i]===b0&&a[i+1]===b1) return i; return -1; };
 
-    // Always display the NEWEST decoded frame. Decoding + tracking can take
-    // longer than one frame interval; if we awaited every frame the reader
-    // would fall behind and the feed would drift further from live the longer
-    // the app ran. Instead: skip stale frames, and never queue a second decode.
     let decoding = false;
 
     while(true) {
@@ -443,7 +371,6 @@ async function startStream() {
       if(done) break;
       buf = cat(buf, value);
 
-      // Pull every complete JPEG out of the buffer, keep only the last one.
       let latest = null, from = 0;
       for(;;){
         const s = find(buf,0xFF,0xD8,from);
@@ -454,7 +381,7 @@ async function startStream() {
         from = e + 2;
       }
       if(latest){
-        buf = buf.slice(from);              // drop the frames we skipped over
+        buf = buf.slice(from);
         if(!decoding){
           decoding = true;
           renderFrame(latest).catch(()=>{}).finally(()=>{ decoding = false; });
@@ -469,24 +396,21 @@ async function startStream() {
 }
 
 async function renderFrame(jpg) {
-  // Training simulator owns the feed while it is running.
+
   if(window.SIM && SIM.on) return;
   try {
     const bmp = await createImageBitmap(new Blob([jpg],{type:'image/jpeg'}));
     VC.width=bmp.width; VC.height=bmp.height;
     vx.drawImage(bmp,0,0);
     bmp.close();
-  } catch(e) { return; } // corrupt frame — skip it
+  } catch(e) { return; }
   processFrame();
 }
 
-// Everything after the frame is in VC: paint, track, overlay. Shared by the
-// live feed and the simulator so both exercise the identical code path.
 function processFrame() {
-  // Draw video FIRST — a tracker/physics error must never freeze the feed
+
   ctx.drawImage(VC,0,0,MC.width,MC.height);
 
-  // Run tracker (isolated: an error here drops tracking, not video)
   try {
     if(targetMark && targetMarkVideo) {
       const img = vx.getImageData(0,0,VC.width,VC.height);
@@ -500,17 +424,10 @@ function processFrame() {
     }
   } catch(e) { console.error('[TRACKER]', e); }
 
-  // Draw crosshairs on top (isolated for the same reason)
   try { drawOverlay(); } catch(e) { console.error('[OVERLAY]', e); }
 }
 
 startStream();
-
-// ══════════════════════════════════════════════════════════════════
-// PYRAMIDAL LUCAS-KANADE TRACKER
-// ══════════════════════════════════════════════════════════════════
-// 4-level pyramid, 25×25 patches, NCC template validation.
-// Handles up to ~120px displacement per frame.
 
 const LK_LEVELS=4, LK_HALF=12, LK_ITERS=25, LK_EPS=0.01, NCC_MIN=0.35;
 let prevGray=null, prevW=0, prevH=0;
@@ -610,35 +527,6 @@ function trackPoint(imgData, px, py) {
   return{x:Math.max(LK_HALF,Math.min(W-LK_HALF,nx)),y:Math.max(LK_HALF,Math.min(H-LK_HALF,ny))};
 }
 
-// ══════════════════════════════════════════════════════════════════
-// PHYSICS ENGINE — RK4 DROP SIMULATION
-// ══════════════════════════════════════════════════════════════════
-//
-// SIGN CONVENTION (critical for accuracy):
-//
-// Wind direction: METEOROLOGICAL — degrees the wind is coming FROM.
-//   windDir=90° means wind blows FROM east, payload drifts WEST.
-//
-// Simulation x-axis: aligned with DOWNWIND direction.
-//   Positive x = downwind. drift output is always positive.
-//
-// World coords: dNorth, dEast = where payload lands relative to release.
-//   driftAngle = (windDir + 180) % 360 = downwind bearing.
-//   dNorth = drift * cos(driftAngle)
-//   dEast  = drift * sin(driftAngle)
-//
-// Aim offset: OPPOSITE of drift (upwind of target).
-//   aimN = -dNorth,  aimE = -dEast
-//
-// Camera frame: uses LIVE heading from MAVLink.
-//   camUp   = direction drone faces (heading)
-//   camRight= 90° clockwise from heading
-//   aimCamUp   = dot(aim, camUp)   → positive = forward on screen
-//   aimCamRight= dot(aim, camRight) → positive = right on screen
-//
-// Canvas: aimPoint.y = target.y - aimCamUp * pxPerM  (minus because canvas Y is inverted)
-//         aimPoint.x = target.x + aimCamRight * pxPerM
-
 function getEffCd(){
   const c=parseFloat(V('cd')), t=parseFloat(V('tm'))/100;
   return c+t*(1.1-c);
@@ -668,14 +556,12 @@ function getWind(){
   };
 }
 
-// Single-phase drop: one drag regime (cd, area) for the whole fall.
 function rk4Drop(h,mass,cd,area,initVx,wSpd){
   let x=0,y=h,vvx=initVx,vy=0,t=0;
   const acc=(vvx,vy,y)=>{
     const rho=getRho(Math.max(0,y));
     const wL=windAtAlt(wSpd,Math.max(0.1,y));
-    // relVx: payload velocity minus wind velocity (both in downwind direction)
-    // wind blows in +x (downwind), so relative = vx - wind
+
     const rx=vvx-wL, ry=vy;
     const sp=Math.sqrt(rx*rx+ry*ry);
     const F=sp<1e-9?0:0.5*rho*sp*sp*cd*area;
@@ -693,11 +579,6 @@ function rk4Drop(h,mass,cd,area,initVx,wSpd){
   return{drift:x, tof:t};
 }
 
-// The RK4 fall simulation is the heaviest thing on the per-frame budget, and
-// it runs on the same thread that decodes and paints the video. Its inputs
-// barely change between frames, so memoise on a quantised key (0.5 m altitude,
-// 0.1 m/s wind — both far below sensor noise). Frees the frame budget for the
-// live feed without changing the aim point the operator sees.
 let _rk4Key=null, _rk4Val=null;
 function rk4DropCached(h,mass,cd,area,initVx,wSpd){
   const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(wSpd*10),
@@ -721,56 +602,35 @@ function computeAim(silent=false){
   const camRt=parseFloat(V('cr'));
   const {speed:wSpd,dir:wDir,src:wSrc}=getWind();
 
-  // Hover tilt: drone tilts downwind to hold position
   const rhoMid=getRho(height/2);
   const Fd=0.5*rhoMid*wSpd*wSpd*dCd*dArea;
   const tiltRad=Math.atan(Fd/(dMass*G));
-  // At release, payload gets small downwind kick from pendulum effect
+
   const initVel=G*Math.sin(tiltRad)*0.05;
 
-  // RK4 simulation — single drag regime, drift is positive (downwind direction)
   const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd);
 
-  // ── COORDINATE TRANSFORM ──────────────────────────────────────
-  // Convert downwind drift to North/East world coordinates
-  //
-  // windDir is FROM direction (meteorological).
-  // Payload drifts in the OPPOSITE direction (downwind).
-  // downwindBearing = (windDir + 180) % 360
   const downwindRad=((wDir+180)%360)*PI/180;
-  const dNorth=drift*Math.cos(downwindRad); // payload displacement N
-  const dEast =drift*Math.sin(downwindRad); // payload displacement E
+  const dNorth=drift*Math.cos(downwindRad);
+  const dEast =drift*Math.sin(downwindRad);
 
-  // Aim point = UPWIND of target (opposite of drift)
-  // Camera offset: forward/right in body frame, rotated by heading
   const hdg=telemetry.heading||0;
   const hdgRad=hdg*PI/180;
   const camOffN=camFwd*Math.cos(hdgRad)-camRt*Math.sin(hdgRad);
   const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
 
-  // Aim vector in world coords (from target to where drone should be)
-  const aimN=-dNorth-camOffN;  // upwind + camera offset
+  const aimN=-dNorth-camOffN;
   const aimE=-dEast -camOffE;
 
-  // ── PROJECT TO CAMERA FRAME ───────────────────────────────────
-  // Camera up = heading direction (what's "forward" for the drone)
-  // Camera right = 90° clockwise from heading
   const camUpN=Math.cos(hdgRad),     camUpE=Math.sin(hdgRad);
   const camRtN=Math.cos(hdgRad+PI/2),camRtE=Math.sin(hdgRad+PI/2);
 
-  const aimCamUp =aimN*camUpN +aimE*camUpE;  // metres forward in camera
-  const aimCamRt =aimN*camRtN +aimE*camRtE;  // metres right in camera
+  const aimCamUp =aimN*camUpN +aimE*camUpE;
+  const aimCamRt =aimN*camRtN +aimE*camRtE;
 
-  // ── CONVERT TO CANVAS PIXELS ──────────────────────────────────
-  // C20 ~90° HFOV at 1× → ground width at height h = 2*h*tan(45°) = 2h.
-  // Zoom narrows the FOV by the zoom factor, shrinking ground-width-in-view
-  // by the same factor, so pixels-per-metre scales linearly with zoom.
   const zoomEl=E('zoom');
-  let zoom=zoomEl?parseFloat(zoomEl.value):22;   // fall back if slider missing
-  // Guard: zoom is a divisor of field of view, so zero or negative makes
-  // pixels-per-metre zero or inverted — every metre would map to no pixels and
-  // the aim marker would be undefined or on the wrong side. Refuse rather than
-  // draw a confident wrong answer.
+  let zoom=zoomEl?parseFloat(zoomEl.value):22;
+
   if(!isFinite(zoom) || zoom <= 0){
     console.error('[AIM] invalid zoom', zoom, '- using 1x');
     showBanner('⚠ ZOOM INVALID — AIM SCALE FORCED TO 1×'); hideBanner(4000);
@@ -779,13 +639,12 @@ function computeAim(silent=false){
   const pxPerM=MC.width/(2*height)*zoom;
 
   aimPoint={
-    x: targetMark.x + aimCamRt * pxPerM,      // right = +x
-    y: targetMark.y - aimCamUp * pxPerM,       // forward = -y (canvas Y inverted)
+    x: targetMark.x + aimCamRt * pxPerM,
+    y: targetMark.y - aimCamUp * pxPerM,
   };
 
   result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
 
-  // Update HUD
   E('hDrift').textContent=drift.toFixed(1);
   E('hTOF').textContent=tof.toFixed(1);
   E('hWind').textContent=wSpd.toFixed(1);
@@ -796,18 +655,12 @@ function computeAim(silent=false){
   if(!silent) hideBanner();
 }
 
-// ══════════════════════════════════════════════════════════════════
-// DRAW OVERLAY — THREE CROSSHAIRS + GUIDANCE
-// ══════════════════════════════════════════════════════════════════
 function drawOverlay(){
   const W=MC.width, H=MC.height;
   const cx=W/2, cy=H/2;
 
-  // 🔵 BLUE — Camera center (always at screen center)
   drawCameraXhair(cx,cy);
 
-  // Alignment state (blue camera-center on green aim point) gates the LOCK button.
-  // Recomputed every frame; reset here and set below when a valid aim exists.
   let alignedNow=false;
   if(aimPoint&&result){
     const adx=aimPoint.x-cx, ady=aimPoint.y-cy;
@@ -817,26 +670,23 @@ function drawOverlay(){
 
   if(!targetMark&&!aimPoint) return;
 
-  // 🔴 RED — Target (tracked)
   if(targetMark) drawXhair(targetMark.x,targetMark.y,'#ff3b55',22,'TARGET');
 
   if(aimPoint&&targetMark){
-    // Drift line: red → green (shows drift path)
+
     ctx.strokeStyle='rgba(255,59,85,.3)';ctx.lineWidth=1;ctx.setLineDash([4,4]);
     ctx.beginPath();ctx.moveTo(targetMark.x,targetMark.y);ctx.lineTo(aimPoint.x,aimPoint.y);ctx.stroke();
     ctx.setLineDash([]);
 
-    // Guidance: blue → green
     const dx=aimPoint.x-cx, dy=aimPoint.y-cy;
     const dist=Math.sqrt(dx*dx+dy*dy);
 
     if(dist>8&&result){
-      // Arrow from blue to green
+
       ctx.strokeStyle='rgba(0,229,255,.6)';ctx.lineWidth=1.5;ctx.setLineDash([5,4]);
       ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(aimPoint.x,aimPoint.y);ctx.stroke();
       ctx.setLineDash([]);
 
-      // Arrowhead
       const a=Math.atan2(dy,dx);
       ctx.fillStyle='rgba(0,229,255,.7)';ctx.beginPath();
       ctx.moveTo(aimPoint.x,aimPoint.y);
@@ -844,30 +694,27 @@ function drawOverlay(){
       ctx.lineTo(aimPoint.x-9*Math.cos(a+.4),aimPoint.y-9*Math.sin(a+.4));
       ctx.closePath();ctx.fill();
 
-      // Error distance pill
       const errM=dist/result.pxPerM;
       const mx=(cx+aimPoint.x)/2, my=(cy+aimPoint.y)/2;
             ctx.fillStyle='rgba(0,229,255,.12)';ctx.strokeStyle='rgba(0,229,255,.4)';ctx.lineWidth=1;
       ctx.beginPath();
-      if(ctx.roundRect) ctx.roundRect(mx-40,my-12,80,18,3); else ctx.rect(mx-40,my-12,80,18); // roundRect needs Chrome 99+
+      if(ctx.roundRect) ctx.roundRect(mx-40,my-12,80,18,3); else ctx.rect(mx-40,my-12,80,18);
       ctx.fill();ctx.stroke();
       ctx.fillStyle='#00e5ff';ctx.font='bold 10px Share Tech Mono';ctx.textAlign='center';
       ctx.fillText(errM.toFixed(1)+'m off',mx,my);ctx.textAlign='left';
 
-      // Direction cue
       const dH=dx>0?'→R':'←L', dV=dy>0?'↓D':'↑U';
       const mH=Math.abs(dx/result.pxPerM).toFixed(1), mV=Math.abs(dy/result.pxPerM).toFixed(1);
       ctx.fillStyle='rgba(0,229,255,.6)';ctx.font='9px Share Tech Mono';ctx.textAlign='center';
       ctx.fillText(`${mH}m ${dH}  ${mV}m ${dV}`,aimPoint.x,aimPoint.y+34);ctx.textAlign='left';
 
     } else if(result&&dist/result.pxPerM<0.5){
-      // ALIGNED flash
+
       ctx.fillStyle='rgba(0,255,136,.15)';ctx.beginPath();ctx.arc(cx,cy,35,0,PI*2);ctx.fill();
       ctx.fillStyle='#00ff88';ctx.font='bold 11px Share Tech Mono';ctx.textAlign='center';
       ctx.fillText('✓ ALIGNED — DROP',cx,cy+48);ctx.textAlign='left';
     }
 
-    // Scale bar (1m)
     if(result){
       const bx=18,by=MC.height-40,bp=result.pxPerM;
       ctx.strokeStyle='rgba(255,255,255,.4)';ctx.lineWidth=1.5;
@@ -877,13 +724,11 @@ function drawOverlay(){
       ctx.fillStyle='rgba(255,255,255,.5)';ctx.font='9px Share Tech Mono';
       ctx.fillText('1m',bx+bp/2-8,by-7);
 
-      // Drift label on red→green line
       const lx=(aimPoint.x+targetMark.x)/2, ly=(aimPoint.y+targetMark.y)/2;
       ctx.fillStyle='rgba(255,59,85,.6)';ctx.font='9px Share Tech Mono';
       ctx.fillText('drift '+result.drift.toFixed(1)+'m',lx+5,ly-3);
     }
 
-    // 🟢 GREEN — Aim point (draw last, on top)
     drawXhair(aimPoint.x,aimPoint.y,'#00ff88',18,'AIM HERE');
   }
 
@@ -925,14 +770,8 @@ function drawHz(){
   hc.strokeStyle='rgba(255,255,255,.2)';hc.lineWidth=1;hc.strokeRect(0,0,W,H);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// TAP + BUTTONS
-// ══════════════════════════════════════════════════════════════════
-// pointerdown, not click: on a touchscreen 'click' waits for the release and is
-// suppressed entirely if the finger slides a few pixels — easy to do on a moving
-// feed. pointerdown covers mouse and touch alike and marks on contact.
 MC.addEventListener('pointerdown', e => {
-  if(e.pointerType==='mouse' && e.button!==0) return;   // ignore right/middle click
+  if(e.pointerType==='mouse' && e.button!==0) return;
   e.preventDefault();
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
@@ -940,8 +779,6 @@ MC.addEventListener('pointerdown', e => {
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
 
-  // Capture template + reset tracker. Isolated: with no video yet there are no
-  // pixels to template from, and that must not stop the mark being placed.
   try {
     const img=vx.getImageData(0,0,VC.width,VC.height);
     const g=toGray(img);
@@ -953,7 +790,7 @@ MC.addEventListener('pointerdown', e => {
   try {
     if(telemetry.altAGL&&telemetry.altAGL>1) computeAim(); else hideBanner(2000);
   } catch(err){ console.error('[AIM]', err); }
-  try { drawOverlay(); } catch(err){ console.error('[OVERLAY]', err); } // show the mark immediately, don't wait for next frame
+  try { drawOverlay(); } catch(err){ console.error('[OVERLAY]', err); }
 });
 
 E('calcBtn').addEventListener('click',()=>computeAim());
@@ -963,28 +800,19 @@ E('clearBtn').addEventListener('click',()=>{
   showBanner('TAP VIDEO TO MARK TARGET');
 });
 
-// ══════════════════════════════════════════════════════════════════
-// SENSOR SELECT (DAY / THERMAL)
-// ══════════════════════════════════════════════════════════════════
-// One build serves every airframe: the server reports which sensors actually
-// answered, so a dual-sensor drone gets a switch and a day-only drone gets
-// nothing. Switching sensors changes BOTH the picture and the aim scale — the
-// two have different optics — and invalidates any tracked target, because the
-// tracker's template came from the other sensor's pixels.
 let cameras = [], activeCam = null;
 
 async function loadCameras(){
   let d;
   try { d = await fetch('/api/cameras').then(r=>r.json()); }
-  catch(e){ return; }                      // browser build without the endpoint
+  catch(e){ return; }
   const prev = cameras.map(c=>c.id).join(',');
   cameras = (d.cameras||[]).filter(c=>c.present);
   activeCam = d.active;
   const sec=E('camSec'), box=E('camBtns');
   if(cameras.length < 2){ sec.style.display='none'; applyCamZoom(cameras[0]); return; }
   sec.style.display='';
-  // Only rebuild the buttons when the set of sensors changes — this polls every
-  // few seconds and replacing the DOM each time would flicker under the thumb.
+
   if(cameras.map(c=>c.id).join(',') !== prev){
     box.innerHTML='';
     cameras.forEach(c=>{
@@ -1006,10 +834,7 @@ function paintCamButtons(){
     const c = cameras.find(x=>x.id===b.dataset.id);
     b.textContent = c && c.model ? c.label+' '+c.model : (c?c.label:b.textContent);
   });
-  // The red "NOT calibrated" warning is gone at the operator's request. What
-  // remains is a one-line statement of the scale actually in use, which is the
-  // number the aim solution depends on and the only way to tell at a glance
-  // that a sensor is still on its compiled-in default.
+
   const c = cameras.find(x=>x.id===activeCam), w=E('camWarn');
   const name = c ? (c.model?c.label+' '+c.model:c.label) : '';
   if(c){
@@ -1018,25 +843,14 @@ function paintCamButtons(){
   } else w.style.display='none';
 }
 
-// Each sensor carries its own aim scale. Carrying the day camera's 22× over to
-// a thermal sensor with different optics would compute a confidently wrong aim
-// point, so the value follows the sensor — and, once the stream reports its
-// resolution, the specific model of that sensor.
-//
-// But it must follow the sensor ONLY when the sensor changes. This used to run
-// on every /api/cameras poll, so any value the operator dialled in was silently
-// dragged back to the camera default within five seconds — which made the
-// thermal scale impossible to calibrate, since calibrating it is exactly the
-// act of moving this slider.
-let zoomKey    = null;   // sensor (and variant) the slider was last auto-set for
-let zoomManual = false;  // operator has moved it since then
+let zoomKey    = null;
+let zoomManual = false;
 
 function applyCamZoom(c){
   if(!c || !isFinite(c.zoom) || c.zoom<=0) return;
   const key = c.id + '|' + (c.model || '');
-  if(key === zoomKey) return;                       // already applied for this sensor
-  // A variant identified for the SAME sensor refines the default — but not over
-  // a figure the operator has just measured by hand.
+  if(key === zoomKey) return;
+
   if(zoomManual && zoomKey && zoomKey.split('|')[0] === c.id){ zoomKey = key; return; }
   zoomKey = key; zoomManual = false;
   setZoom(c.zoom);
@@ -1047,18 +861,13 @@ function setZoom(v){
   if(!z || parseFloat(z.value)===v) return;
   z.value=v;
   E('zmL').textContent=(Number.isInteger(v)?v.toFixed(0):v.toFixed(2))+'×';
-  if(targetMark) computeAim(true);        // rescale an existing solution
+  if(targetMark) computeAim(true);
 }
 
-// Touching the slider hands control to the operator until they switch sensors.
 E('zoom').addEventListener('input', ()=>{ zoomManual = true; });
 
-// Releasing it saves the figure against the active sensor. Calibrating a sensor
-// IS moving this slider, so a value that evaporated on the next app start would
-// mean the calibration never really happened. 'change' not 'input': once per
-// release, not once per pixel of drag.
 E('zoom').addEventListener('change', async ()=>{
-  if(!activeCam) return;                       // no sensor list (browser build)
+  if(!activeCam) return;
   const v = parseFloat(E('zoom').value);
   if(!isFinite(v) || v<=0) return;
   const body={}; body[activeCam]=v;
@@ -1070,13 +879,13 @@ E('zoom').addEventListener('change', async ()=>{
       if(c){ c.zoom=v; c.calibrated=true; c.zoomSet=true; paintCamButtons(); }
       showBanner('ZOOM '+v.toFixed(2)+'× SAVED FOR '+activeCam.toUpperCase()); hideBanner(2000);
     }
-  }catch(e){ /* bench build without the endpoint: the slider still works */ }
+  }catch(e){  }
 });
 
 async function selectCamera(c){
   if(c.id===activeCam) return;
   showBanner('SWITCHING TO '+c.label+' …');
-  // Drop the target first: its template is the other sensor's pixels.
+
   targetMark=null; targetMarkVideo=null; aimPoint=null; result=null;
   prevGray=null; tplGray=null;
   E('aimR').classList.remove('show');
@@ -1090,27 +899,15 @@ async function selectCamera(c){
 }
 
 loadCameras();
-// Two things arrive late and both change what the panel should say: which
-// sensors this airframe answered for (probed ~25 s in) and which thermal model
-// is fitted (known only once the stream reports its resolution). Poll rather
-// than guess when that is.
+
 setInterval(loadCameras, 5000);
 
-// ══════════════════════════════════════════════════════════════════
-// CONNECTION SETTINGS (PORTS / CAMERA URLS)
-// ══════════════════════════════════════════════════════════════════
-// These were compiled in, so a different ground station — Skydroid delivers
-// telemetry to 14551, SIYI hands it to QGC on 14550 — or a camera at another
-// address meant a rebuild, a reinstall and a fresh activation. The server saves
-// them and rebinds live; only what changed is restarted, so editing a camera URL
-// does not drop telemetry.
 let settings = null;
 
 async function loadSettings(){
   try {
     const r = await fetch('/api/settings');
-    // An older APK serves the UI but not this endpoint. Say that, rather than
-    // letting r.json() throw and reporting it as a network fault.
+
     if(!r.ok) throw new Error('server answered '+r.status+' — this build of the app is older than its interface');
     settings = await r.json();
   }
@@ -1149,8 +946,6 @@ function paintSettings(){
     : 'Saved on this device and applied on every launch. Clear a URL to restore its built-in default.';
 }
 
-// Which transport the operator has selected. Not saved until SAVE & APPLY, so
-// picking BLUETOOTH does not drop a working UDP link mid-flight by accident.
 let pendingSrc = null;
 function currentSrc(){ return pendingSrc || (settings && settings.telemetrySource) || 'udp'; }
 
@@ -1165,8 +960,7 @@ function paintSource(){
   E('setBtRow').style.display = bt ? 'flex' : 'none';
   if(bt){
     const sel=E('setBtDev'), devs=(settings&&settings.bluetoothDevices)||[];
-    // Rebuild only when the device set changes, so the operator's choice is not
-    // reset under them while the panel is open.
+
     const sig=devs.map(d=>d.address).join(',');
     if(sel.dataset.sig!==sig){
       sel.dataset.sig=sig; sel.innerHTML='';
@@ -1204,11 +998,10 @@ async function postSettings(body, working){
   try { r = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
                                           body:JSON.stringify(body)}).then(x=>x.json()); }
   catch(e){ setMsg('Could not reach the local server — nothing was changed.', false); return; }
-  // The server validates, not the browser: the same rules have to hold for
-  // whichever build is running, so the message the operator sees is its message.
+
   if(!r.ok){ setMsg('✕ '+(r.err||'rejected'), false); return; }
   settings = r;
-  pendingSrc = null;              // the server's answer is now the truth
+  pendingSrc = null;
   paintSettings();
   const parts=[];
   if(r.mavlinkRestarted) parts.push('telemetry link rebound');
@@ -1219,13 +1012,10 @@ async function postSettings(body, working){
 
 E('setBtn').addEventListener('click', async ()=>{
   const rows=E('setRows'), open = rows.style.display==='none';
-  // Open FIRST, then load. The failure message lives inside this panel, so
-  // bailing out before showing it left the operator with a button that did
-  // nothing and gave no reason — which is exactly how it failed in the field.
+
   rows.style.display = open ? 'flex' : 'none';
   E('setBtn').textContent = open ? '⚙ SETTINGS — CLOSE' : '⚙ SETTINGS — PORTS & CAMERA URLS';
-  // Load on open, never on a timer: repainting the fields under the operator
-  // would wipe whatever they were part-way through typing.
+
   if(open){ E('setMsg').style.display='none'; await loadSettings(); }
 });
 
@@ -1246,9 +1036,6 @@ E('setSave').addEventListener('click', ()=>{
 
 E('setReset').addEventListener('click', ()=>postSettings({reset:true}, 'Restoring defaults…'));
 
-// Setup check for the collector. Sends one marker record by the real upload
-// path, so a mismatched token or a wrong URL is found while standing at the
-// ground station rather than six hours later when the scheduled upload runs.
 E('setMetTest').addEventListener('click', async ()=>{
   const btn=E('setMetTest'), out=E('setMetOut');
   btn.disabled=true; btn.textContent='▲ TESTING…';
@@ -1266,11 +1053,6 @@ E('setMetTest').addEventListener('click', async ()=>{
   btn.disabled=false; btn.textContent='▲ TEST COLLECTOR';
 });
 
-// ── MAVLINK SCAN ──────────────────────────────────────────────────
-// Read-only. Listens on every common MAVLink port at once and reports what the
-// device can actually hear, plus every UDP port already open on it. Written for
-// the SIYI ground station, whose own app decodes MAVLink but exposes no setting
-// naming the port it uses — one guess per rebuild is not a method.
 E('scanBtn').addEventListener('click', async ()=>{
   const btn=E('scanBtn'), out=E('scanOut');
   btn.disabled=true; btn.textContent='◎ SCANNING — KEEP THE AIRCRAFT POWERED…';
@@ -1299,14 +1081,10 @@ E('probeBtn').addEventListener('click', async ()=>{
   btn.disabled=false; btn.textContent='▲ PROBE AGAIN';
 });
 
-// Android system uids. Anything below 10000 is part of the OS, not an app —
-// naming them is what stopped 80 rows of DNS and radio sockets looking like
-// candidates for the telemetry path.
 const SYS_UID={0:'root',1000:'system',1001:'radio',1002:'bluetooth',1010:'wifi',
                1013:'media',1019:'drm',1020:'mDNS',1021:'gps',1051:'DNS',1053:'webview'};
 function uidName(u){ return u>=10000 ? 'app uid '+u : (SYS_UID[u]||('system uid '+u)); }
 
-/** Collapse 50013,50014,…,50061 into "50013-50061 (35)". */
 function runs(nums){
   const s=[...new Set(nums)].sort((a,b)=>a-b), out=[];
   let i=0;
@@ -1325,12 +1103,10 @@ function renderScan(d){
   const socks=(d.sockets||[]).filter(s=>!s.error);
   const errs=(d.sockets||[]).filter(s=>s.error);
 
-  // My own addresses, so a socket's far end can be judged against my subnet.
   const mine=[]; (d.interfaces||[]).forEach(i=>(i.addresses||[]).forEach(a=>mine.push(a)));
   const subnets=mine.map(a=>a.split('.').slice(0,3).join('.'));
   const onMyNet=a=>!!a && subnets.some(s=>a.indexOf(s+'.')===0) && mine.indexOf(a)<0;
 
-  // ── the answer, then the evidence ──
   const btSpp=((d.bluetooth&&d.bluetooth.paired)||[]).filter(p=>p.spp);
   if(mav.length){
     L.push('✓ MAVLINK FOUND on port '+mav.map(p=>p.port).join(', '));
@@ -1338,8 +1114,7 @@ function renderScan(d){
   } else if(heard.length){
     L.push('~ Traffic but no MAVLink on: '+heard.map(p=>p.port).join(', '));
   } else if(btSpp.length){
-    // Silence on every port plus a paired serial device is not an inconclusive
-    // result — it is the answer.
+
     L.push('✕ No MAVLink on any IP port, but a Bluetooth SERIAL device is paired:');
     btSpp.forEach(p=>L.push('    '+p.address+'  '+p.name));
     L.push('  On this ground station telemetry is almost certainly on that link,');
@@ -1355,10 +1130,6 @@ function renderScan(d){
   L.push('  this app: uid '+d.myUid+', listening on '+d.appMavlinkPort+
          (d.multicastLock?', multicast lock held':''));
 
-  // ── Bluetooth ──
-  // Some ground stations put MAVLink on a Bluetooth serial link, not on IP.
-  // Then no port, no forwarding and no multicast lock can ever help, and this
-  // is the only section that says so.
   const bt=d.bluetooth;
   if(bt){
     L.push('');
@@ -1374,9 +1145,6 @@ function renderScan(d){
     }
   }
 
-  // ── the decisive section ──
-  // A socket is only half described by its local address. A far end on the
-  // datalink's subnet names the telemetry path, whoever owns it.
   L.push('');
   L.push('SOCKETS TALKING TO MY SUBNET  ← the telemetry path, if it exists');
   const far=socks.filter(s=>onMyNet(s.remoteAddr));
@@ -1389,7 +1157,6 @@ function renderScan(d){
     L.push('  (none — nothing on this device holds a connection to the datalink)');
   }
 
-  // ── app sockets, listening ──
   L.push('');
   L.push('APP-OWNED SOCKETS (uid ≥ 10000)');
   const app=socks.filter(s=>s.uid>=10000);
@@ -1404,7 +1171,6 @@ function renderScan(d){
     L.push('   runs as a system service or does not use IP at all.)');
   }
 
-  // ── system noise, collapsed ──
   L.push('');
   L.push('SYSTEM SOCKETS (collapsed)');
   const byUid={};
@@ -1424,8 +1190,7 @@ function renderScan(d){
         : 'could not bind: '+p.error));
       return;
     }
-    // One line per port that heard something; the silent ones as a single row,
-    // because eleven "0 pkts" lines pushed everything useful off the screen.
+
     if(!p.packets){ silent.push(p.port); return; }
     L.push('  '+String(p.port).padEnd(6)+String(p.packets).padStart(4)+' pkts '+
            String(p.bytes).padStart(7)+' B'+
@@ -1463,12 +1228,9 @@ function renderProbe(d){
   return L.join('\n');
 }
 
-// ══════════════════════════════════════════════════════════════════
-// POSITION LOCK (BRAKE) / UNLOCK (LOITER)
-// ══════════════════════════════════════════════════════════════════
 let isAligned=false;
 function setAligned(a){
-  if(a===isAligned) return;           // only touch the DOM on change
+  if(a===isAligned) return;
   isAligned=a;
   const b=E('lockBtn');
   b.disabled=!a;
@@ -1484,7 +1246,7 @@ async function sendMode(mode){
   }catch(e){ showBanner('CMD FAILED: no server'); hideBanner(2500); return false; }
 }
 E('lockBtn').addEventListener('click',()=>{
-  if(E('lockBtn').disabled) return;   // guard: only when aligned
+  if(E('lockBtn').disabled) return;
   sendMode('BRAKE');
   showBanner('🔒 LOCKING — BRAKE'); hideBanner(1500);
 });
@@ -1493,36 +1255,26 @@ E('unlockBtn').addEventListener('click',()=>{
   showBanner('🔓 UNLOCKED — LOITER'); hideBanner(1500);
 });
 E('rtlBtn').addEventListener('click',()=>{
-  // RTL flies the aircraft home autonomously — require an explicit confirm
+
   if(!confirm('RTL: the drone will fly HOME autonomously. Continue?')) return;
   sendMode('RTL');
   showBanner('🏠 RTL — RETURNING HOME'); hideBanner(2000);
 });
 
-// ══════════════════════════════════════════════════════════════════
-// TELEMETRY WEBSOCKET
-// ══════════════════════════════════════════════════════════════════
 function connectTelem(){
-  // Derive from the page origin, never a hardcoded host:port. On the GCS the
-  // embedded server falls back off :3000 when it is taken, and 'localhost' can
-  // resolve to ::1 while the server listens only on IPv4 — either one silently
-  // killed telemetry.
+
   const wsProto = location.protocol==='https:' ? 'wss://' : 'ws://';
   const wsHost  = location.host || 'localhost:3000';
   const ws=new WebSocket(wsProto+wsHost+'/telemetry');
   ws.onopen=()=>console.log('[TELEM] Connected to '+wsHost);
   ws.onmessage=e=>{
-    if(window.SIM && SIM.on) return;   // simulator drives telemetry in training mode
+    if(window.SIM && SIM.on) return;
     try{
       const d=JSON.parse(e.data);
-      // Object.assign, not object spread: this file has to parse on the oldest
-      // WebView we ship to. See the ES2017 note at the top of the script.
+
       telemetry=Object.assign({},telemetry,d);
     }catch(err){ console.error('[TELEM] bad frame', err); return; }
-    // Each of these is isolated: a throw in the HUD must never stop the link
-    // pills from updating, and neither may stop the aim solution. A single
-    // shared try{}catch{} here once left the pills stuck on red while the
-    // telemetry behind them was arriving perfectly well.
+
     try{ updateHUD(); }catch(err){ console.error('[HUD]', err); }
     try{ updateStatus(); }catch(err){ console.error('[STATUS]', err); }
     try{
@@ -1534,9 +1286,6 @@ function connectTelem(){
 }
 connectTelem();
 
-// ══════════════════════════════════════════════════════════════════
-// WIND FETCH
-// ══════════════════════════════════════════════════════════════════
 E('fetchW').addEventListener('click', async()=>{
   const q=V('wLoc').trim(); if(!q) return;
   try{
@@ -1550,9 +1299,6 @@ E('fetchW').addEventListener('click', async()=>{
   }catch(e){}
 });
 
-// ══════════════════════════════════════════════════════════════════
-// SLIDER BINDINGS + HELPERS
-// ══════════════════════════════════════════════════════════════════
 function E(id){return document.getElementById(id)}
 function V(id){return E(id).value}
 function S(id,v){E(id).value=v}
@@ -1573,16 +1319,6 @@ bind('cf','cfL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('cr','crL',v=>(v>=0?'+':'')+v.toFixed(2)+' m');
 bind('zoom','zmL',v=>(Number.isInteger(v)?v.toFixed(0):v.toFixed(2))+'×');
 
-// ══════════════════════════════════════════════════════════════════
-// PAYLOAD PRESETS — calibre selector + locked tuning sliders
-// ══════════════════════════════════════════════════════════════════
-// Operators select a calibre; the ballistic settings come from the preset and
-// the sliders stay locked so they cannot be nudged in the air. Tuning is behind
-// a deliberate unlock, and changing calibre always re-locks and reloads.
-//
-// 81 mm figures are the trial-validated ones. 51 mm is SCALED from them by the
-// (51/81)^2 calibre ratio and has NOT been validated by drop trials — treat its
-// results as provisional until it has its own firings.
 const PAYLOADS = {
   '81': { mass:4.00, cd:0.20, tumble:0, area:0.030, note:'Standard 81 mm settings loaded.' },
   '51': { mass:0.90, cd:0.20, tumble:0, area:0.012, note:'51 mm settings loaded — scaled from 81 mm, not yet trial-validated.' },
@@ -1596,7 +1332,7 @@ function applyPayloadPreset(cal){
   E('calNote').textContent = p.note + (tuneUnlocked ? '' : ' Sliders locked.');
   if(targetMark) computeAim(true);
 }
-// set value and refresh its label without firing input listeners twice
+
 function S_set(id,v){ const el=E(id); el.value=v; el.dispatchEvent(new Event('input')); }
 
 function setTuneLocked(locked){
@@ -1613,7 +1349,7 @@ function setTuneLocked(locked){
 }
 
 E('cal').addEventListener('change', ()=>{
-  setTuneLocked(true);              // changing calibre always re-locks
+  setTuneLocked(true);
   applyPayloadPreset(V('cal'));
 });
 E('tuneBtn').addEventListener('click', ()=>{
@@ -1623,7 +1359,6 @@ E('tuneBtn').addEventListener('click', ()=>{
 setTuneLocked(true);
 applyPayloadPreset('81');
 
-// Live-recompute the aim point when any physics/camera input changes
 ['ws','wd','pm','cd','tm','pa','tmp','el','tr','dm','da','dc','cf','cr','zoom'].forEach(id=>{
   E(id).addEventListener('input',()=>{ if(targetMark) computeAim(true); });
 });
@@ -1641,12 +1376,11 @@ function updateHUD(){
   E('tRoll').textContent=f(telemetry.roll)+'°';
   E('tPitch').textContent=f(telemetry.pitch)+'°';
   E('tYaw').textContent=f(telemetry.heading)+'°';
-  // Direction is dropped when the FC does not report one, rather than printed
-  // as "undefined°" — which is what the optional chain here used to render.
+
   const wd=(telemetry.windDir===null||telemetry.windDir===undefined)?'':' '+telemetry.windDir.toFixed(0)+'°';
   E('tWind').textContent=telemetry.windSpeed!==null?telemetry.windSpeed.toFixed(1)+' m/s'+wd:'N/A';
   E('sTime').textContent=new Date().toLocaleTimeString();
-  // Flight-mode readout + LOCKED highlight when the FC reports BRAKE
+
   const md=telemetry.mode||'—', locked=md==='BRAKE';
   const mEl=E('mMode');
   mEl.textContent=md;
@@ -1661,9 +1395,6 @@ function updateStatus(){
   m.textContent=telemetry.mavlinkOk?'MAVLINK ✓':'MAVLINK ✕';m.className='pill '+(telemetry.mavlinkOk?'ok':'bad');
 }
 
-// While there is no picture, say WHICH source was tried and what it reported.
-// On the aircraft the operator has no logcat, so a silent black screen is
-// indistinguishable from a wrong URL, a wrong transport or a dead camera.
 setInterval(async ()=>{
   const n=E('nosig');
   if(!n || n.classList.contains('hide')) return;
@@ -1691,9 +1422,6 @@ function hideBanner(d=0){setTimeout(()=>E('banner').classList.add('hide'),d);}
 
 new ResizeObserver(resize).observe(MC.parentElement);
 
-// ══════════════════════════════════════════════════════════════════
-// SERVICE WORKER (offline support)
-// ══════════════════════════════════════════════════════════════════
 if('serviceWorker' in navigator){
   const sw=`self.addEventListener('install',e=>{self.skipWaiting()});
 self.addEventListener('activate',e=>{self.clients.claim()});
@@ -1708,8 +1436,7 @@ self.addEventListener('fetch',e=>{
   navigator.serviceWorker.register(URL.createObjectURL(b)).catch(()=>{});
 }
 </script>
-<!-- Training simulator: synthesises the feed + telemetry. Loaded after the app
-     so it can drive the same tracker/physics/overlay code path. -->
+
 <script src="/sim.js"></script>
 </body>
 </html>

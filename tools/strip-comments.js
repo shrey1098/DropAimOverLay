@@ -1,64 +1,38 @@
 #!/usr/bin/env node
-/**
- * Strip comments from the web assets for a release build.
- *
- * WHY
- * The aim solver, the drag model, the wind profile and the payload constants
- * ship as plain JavaScript inside the APK — `unzip` and read. The code alone is
- * work to follow; the 250-odd comment lines explaining WHY each constant is what
- * it is are the part worth stealing. Removing them does not make the app secure,
- * it removes the free explanation.
- *
- * NOT a minifier. It deletes comments and trailing whitespace, and nothing else:
- * no renaming, no reordering, no semicolon games. A minifier that mangles this
- * file and ships a subtly broken aim solution to an aircraft is a far worse
- * outcome than a readable one, and the reward for the extra risk is a few KB.
- *
- * Both passes are single left-to-right scans, not regexes, because both have
- * already been caught out by the alternative:
- *   - in JS, `//` inside a string or a regex literal is not a comment, and a
- *     regex literal cannot be told from division without tracking what precedes
- *     it;
- *   - in HTML, protecting script bodies with a regex matched the `<script>`
- *     written inside a COMMENT, leaving that comment unterminated and deleting
- *     the error trap and the layout container along with it.
- *
- * Usage:  node tools/strip-comments.js <in> <out>
- */
+
 'use strict';
 const fs = require('fs');
 
-/** True when a `/` at this point starts a regex literal rather than division. */
 function regexAllowedAfter(prev) {
   if (prev === null) return true;
-  if (/[)\]}]/.test(prev)) return false;      // end of an expression -> division
-  if (/[\w$]/.test(prev)) return false;       // identifier or number -> division
-  return true;                                // operator, comma, brace, etc.
+  if (/[)\]}]/.test(prev)) return false;
+  if (/[\w$]/.test(prev)) return false;
+  return true;
 }
 
 function stripJs(src) {
   let out = '';
   let i = 0;
-  let prev = null;            // last significant char emitted; regex vs division
+  let prev = null;
   const n = src.length;
 
   while (i < n) {
     const c = src[i], c2 = src[i + 1];
 
-    if (c === '/' && c2 === '/') {            // line comment
+    if (c === '/' && c2 === '/') {
       while (i < n && src[i] !== '\n') i++;
-      continue;                                // keep the newline itself
+      continue;
     }
-    if (c === '/' && c2 === '*') {            // block comment
+    if (c === '/' && c2 === '*') {
       i += 2;
       while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
-        if (src[i] === '\n') out += '\n';      // preserve line numbering
+        if (src[i] === '\n') out += '\n';
         i++;
       }
       i += 2;
       continue;
     }
-    if (c === '"' || c === "'") {             // string literal
+    if (c === '"' || c === "'") {
       const q = c; out += c; i++;
       while (i < n) {
         out += src[i];
@@ -69,7 +43,7 @@ function stripJs(src) {
       prev = q;
       continue;
     }
-    if (c === '`') {                          // template literal, may nest ${ }
+    if (c === '`') {
       out += c; i++;
       let depth = 0;
       while (i < n) {
@@ -82,12 +56,12 @@ function stripJs(src) {
       prev = '`';
       continue;
     }
-    if (c === '/' && regexAllowedAfter(prev)) {   // regex literal
+    if (c === '/' && regexAllowedAfter(prev)) {
       let j = i + 1, inClass = false, ok = false;
       while (j < n) {
         const d = src[j];
         if (d === '\\') { j += 2; continue; }
-        if (d === '\n') break;                    // unterminated: not a regex
+        if (d === '\n') break;
         if (d === '[') inClass = true;
         else if (d === ']') inClass = false;
         else if (d === '/' && !inClass) { ok = true; break; }
@@ -95,7 +69,7 @@ function stripJs(src) {
       }
       if (ok) {
         j++;
-        while (j < n && /[a-z]/.test(src[j])) j++;   // flags
+        while (j < n && /[a-z]/.test(src[j])) j++;
         out += src.slice(i, j); i = j; prev = '/';
         continue;
       }
@@ -123,7 +97,7 @@ function stripCss(src) {
       i += 2;
       continue;
     }
-    if (src[i] === '"' || src[i] === "'") {      // url('...') etc.
+    if (src[i] === '"' || src[i] === "'") {
       const q = src[i]; out += src[i]; i++;
       while (i < n) {
         out += src[i];
@@ -138,13 +112,6 @@ function stripCss(src) {
   return out;
 }
 
-/**
- * HTML: drop comments, and strip the bodies of script and style elements.
- * Comments are recognised in the SAME pass as the tags — see the header.
- * Newlines inside removed comments are preserved so line numbers still match
- * the original: the in-page error trap reports them, and a report that does not
- * line up with the source is worse than none.
- */
 function stripHtml(src) {
   let out = '';
   let i = 0;
@@ -181,7 +148,6 @@ function stripHtml(src) {
   return tidy(out);
 }
 
-/** Trailing whitespace, and the runs of blank lines the comments left behind. */
 function tidy(s) {
   return s.split('\n').map(l => l.replace(/\s+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n');
 }

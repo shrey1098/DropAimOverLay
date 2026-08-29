@@ -14,15 +14,6 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import kotlin.concurrent.thread
 
-/**
- * Embedded HTTP + WebSocket server that replicates the routes public/index.html
- * expects from the old Node server, so the web app runs unchanged in the WebView:
- *   GET  /                 -> assets/www/index.html (+ static assets)
- *   GET  /stream           -> MJPEG (multipart)     from FrameBus
- *   WS   /telemetry        -> telemetry JSON @5Hz
- *   GET  /api/status
- *   POST /api/mode         -> LOCK/UNLOCK/RTL
- */
 class WebServer(
     private val ctx: Context,
     private val mav: MavlinkService,
@@ -30,7 +21,6 @@ class WebServer(
     port: Int = Config.HTTP_PORT
 ) : NanoWSD("127.0.0.1", port) {
 
-    // ── WebSocket: telemetry ─────────────────────────────────────
     override fun openWebSocket(handshake: IHTTPSession): WebSocket = TelemetrySocket(handshake)
 
     private inner class TelemetrySocket(hs: IHTTPSession) : WebSocket(hs) {
@@ -50,7 +40,6 @@ class WebServer(
         override fun onException(exception: java.io.IOException?) { open = false }
     }
 
-    // ── HTTP ─────────────────────────────────────────────────────
     override fun serveHttp(session: IHTTPSession): Response {
         val uri = session.uri
         return try {
@@ -69,9 +58,7 @@ class WebServer(
                 uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
                 uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
                 uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
-                // Setup check for the metrics collector: posts one marker by the
-                // real upload path. Blocking, but this is an HTTP worker thread,
-                // not the main one.
+
                 uri == "/api/metrics/test" && session.method == Method.POST -> {
                     val r = UploadWorker.testUpload(ctx)
                     json(JSONObject()
@@ -81,11 +68,9 @@ class WebServer(
                         .put("tokenSet", BuildConfig.METRICS_TOKEN.isNotEmpty())
                         .toString())
                 }
-                // Read-only: opens its own sockets, looks, closes them. Does not
-                // touch the live telemetry path.
+
                 uri == "/api/mavscan" -> json(MavScan.run(ctx).put("platform", "android").toString())
-                // Transmits: one standard GCS heartbeat per endpoint. Reached
-                // only from a button that says so.
+
                 uri == "/api/mavprobe" -> json(MavScan.probe().put("platform", "android").toString())
                 else -> staticAsset(if (uri == "/") "/index.html" else uri)
             }
@@ -95,7 +80,6 @@ class WebServer(
         }
     }
 
-    // MJPEG: emit each NEW frame once (no stale re-sends).
     private fun streamResponse(): Response {
         val stream = object : InputStream() {
             private var cur: ByteArrayInputStream = ByteArrayInputStream(ByteArray(0))
@@ -125,23 +109,14 @@ class WebServer(
         else jsonStatus(Response.Status.SERVICE_UNAVAILABLE, """{"ok":false,"err":"no telemetry link yet"}""")
     }
 
-    /**
-     * The sensors on this aircraft. 'present' is what actually answered a
-     * DESCRIBE, so the UI can offer a switch on a dual-sensor drone and stay out
-     * of the way on a day-only one, from the same build.
-     */
     private fun apiCameras(): Response {
         val cams = Settings.cameras
         val activeId = FrameBus.activeCamera.ifEmpty { cams.firstOrNull()?.id ?: "" }
         val arr = org.json.JSONArray()
         cams.forEachIndexed { i, c ->
-            // A variant is only known for the camera that is actually playing,
-            // and only once its resolution has arrived. Everything else reports
-            // the camera's own default.
+
             val v = if (c.id == activeId) c.variantFor(FrameBus.videoW, FrameBus.videoH) else null
-            // Precedence: what the operator measured on this airframe, then the
-            // variant identified from the stream, then the compiled-in default.
-            // A figure measured here beats one guessed from a resolution.
+
             val set = Settings.zoomOverride(c.id)
             arr.put(JSONObject()
                 .put("index", i)
@@ -172,15 +147,6 @@ class WebServer(
         else jsonStatus(Response.Status.INTERNAL_ERROR, """{"ok":false,"err":"switch failed"}""")
     }
 
-    /**
-     * Change the MAVLink/QGC ports or a camera URL without a rebuild.
-     *
-     * Applied live: rebinding the socket and re-opening the stream is the whole
-     * point — an operator who has to reinstall the app to move a port has not
-     * been given a setting, they have been given a config file. Only what
-     * actually changed is restarted, so editing a camera URL does not drop
-     * telemetry.
-     */
     private fun apiSaveSettings(session: IHTTPSession): Response {
         val body = postBody(session)
         val o = try { JSONObject(body) } catch (_: Exception) {
@@ -196,8 +162,7 @@ class WebServer(
         if (o.optBoolean("reset", false)) {
             Settings.reset(ctx)
         } else {
-            // -1 for a key that is present but not a number, so validation
-            // rejects it by name instead of silently keeping the old port.
+
             val mavPort = if (o.has("mavlinkPort")) o.optInt("mavlinkPort", -1) else null
             val qgcPort = if (o.has("qgcPort")) o.optInt("qgcPort", -1) else null
             val urls = HashMap<String, String>()
@@ -218,13 +183,10 @@ class WebServer(
                     JSONObject().put("ok", false).put("err", err).toString())
         }
 
-        // Switching transport, or picking a different Bluetooth device, means the
-        // same thing as a port change: the telemetry link has to be rebuilt.
         val portsChanged = Settings.mavlinkPort != oldMav || Settings.qgcPort != oldQgc ||
                            Settings.telemetrySource != oldSrc || Settings.bluetoothAddress != oldBt
         val urlsChanged  = Settings.cameras.associate { it.id to it.url } != oldUrls
-        // This runs on an HTTP worker thread, not the main thread, so the brief
-        // block inside restart() is safe here.
+
         if (portsChanged) try { mav.restart() } catch (e: Exception) { Log.e(TAG, "mavlink restart: ${e.message}") }
         if (urlsChanged)  try { video.reload() } catch (e: Exception) { Log.e(TAG, "video reload: ${e.message}") }
 
@@ -243,8 +205,7 @@ class WebServer(
             val bytes = ctx.assets.open("www/$clean").readBytes()
             newFixedLengthResponse(Response.Status.OK, mimeOf(clean), ByteArrayInputStream(bytes), bytes.size.toLong())
         } catch (_: Exception) {
-            // Say WHY, not just "not found" — a missing web asset means the APK
-            // was built without the syncWebAssets copy having run.
+
             val have = try { ctx.assets.list("www")?.joinToString(", ") ?: "" } catch (e: Exception) { "?" }
             val msg = if (have.isBlank())
                 "assets/www is EMPTY — the web app was not packaged into this APK.\n" +

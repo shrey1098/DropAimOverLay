@@ -1,33 +1,14 @@
-/*
- * DROP·AIM — TRAINING SIMULATOR
- * =============================
- * Synthesises the camera feed and the telemetry so an operator can practise the
- * complete engagement without an aircraft.
- *
- * Design rule: the simulator only replaces the two INPUTS (video frames and
- * telemetry). Target marking, the Lucas-Kanade tracker, the RK4 aim solution,
- * the offset/registration and the drop log are the app's own, unmodified code —
- * so what the trainee learns is the real system, not a mock-up.
- *
- * Camera model: gimbal-stabilised nadir view. World->screen is a rotate+scale
- * about the drone position with pixels-per-metre = VC.width/(2*alt)*zoom, i.e.
- * exactly the projection computeAim() assumes, so the overlay lines up.
- *
- * Truth vs. dialled: the fall is integrated with slightly different drag and a
- * gusting wind than the operator has entered, so good technique produces good —
- * but not perfect — results, and sloppy technique visibly misses.
- */
+
+
 (function () {
 'use strict';
 
 const S = window.SIM = {
   on: false,
   scene: 'dummy',
-  ground: null,          // offscreen canvas holding the terrain
-  mpp: 0.1,              // metres per ground-image pixel
-  // Start already holding over the target area — at 22x zoom and 150 m the
-  // field of view is only ~14 m across, so the aircraft is positioned as it
-  // would be on task, with the target in shot and a few metres of offset to fly.
+  ground: null,
+  mpp: 0.1,
+
   drone: { n: 4, e: -3, alt: 150, hdg: 0 },
   target: { n: 0, e: 0 },
   wind: { spd: 4, dir: 200 },
@@ -36,16 +17,14 @@ const S = window.SIM = {
   raf: null,
   keys: {},
   stick: { x:0, y:0, z:0, rz:0, rx:0, ry:0, hatx:0, haty:0 },
-  stickSeen: false,        // has any axis ever moved? proves sticks reach Android
-  map: 'rzz',              // which axes fly the aircraft — see applyStick()
+  stickSeen: false,
+  map: 'rzz',
   lastDrop: null,
-  fall: null,            // in-flight round being animated
+  fall: null,
 };
 
 const D2R = Math.PI / 180;
 
-// ── called from MainActivity (native) ─────────────────────────────
-// Physical GCS sticks arrive here as raw axis values in -1..1.
 window.__stick = function (a) {
   Object.assign(S.stick, a);
   for (const k in a) if (Math.abs(a[k]) > 0.12) S.stickSeen = true;
@@ -59,26 +38,21 @@ window.__pad = function (btn) {
 };
 const E = id => document.getElementById(id);
 
-// ── terrain generation ────────────────────────────────────────────
-// Feature sizes are specified in METRES and converted with mpp, so the terrain
-// stays realistic at the ~60 px/m the camera actually resolves (22x @ 150 m).
 function makeGround(size, mpp, withTarget) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
-  const m = v => v / mpp;                        // metres -> px
+  const m = v => v / mpp;
 
-  // base soil
   g.fillStyle = '#8a7f6d'; g.fillRect(0, 0, size, size);
 
-  // large tonal patches (2–12 m across)
   for (let i = 0; i < 140; i++) {
     const x = Math.random() * size, y = Math.random() * size, r = m(2 + Math.random() * 10);
     const sh = 105 + Math.random() * 55;
     g.fillStyle = `rgba(${sh},${sh - 8},${sh - 24},0.07)`;
     g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
   }
-  // vehicle tracks — strong linear features the tracker locks onto
+
   for (let i = 0; i < 6; i++) {
     const y0 = Math.random() * size, a = (Math.random() - 0.5) * 0.7;
     g.strokeStyle = 'rgba(80,72,60,0.35)'; g.lineWidth = m(0.25 + Math.random() * 0.2);
@@ -86,13 +60,13 @@ function makeGround(size, mpp, withTarget) {
     g.strokeStyle = 'rgba(190,180,160,0.22)'; g.lineWidth = m(0.08);
     g.beginPath(); g.moveTo(-50, y0 + m(0.35)); g.lineTo(size + 50, y0 + m(0.35) + Math.tan(a) * size); g.stroke();
   }
-  // scrub bushes (0.3–1.2 m)
+
   for (let i = 0; i < 700; i++) {
     const x = Math.random() * size, y = Math.random() * size, r = m(0.10 + Math.random() * 0.28);
     g.fillStyle = `rgba(72,78,52,${0.22 + Math.random() * 0.30})`;
     g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
   }
-  // gravel / stones (3–15 cm) — the high-frequency detail optical flow needs
+
   const stones = Math.round(size * size / 900);
   for (let i = 0; i < stones; i++) {
     const x = Math.random() * size, y = Math.random() * size, r = m(0.015 + Math.random() * 0.06);
@@ -100,7 +74,7 @@ function makeGround(size, mpp, withTarget) {
                                       : `rgba(205,198,178,${0.2 + Math.random() * 0.4})`;
     g.beginPath(); g.arc(x, y, Math.max(0.6, r), 0, 7); g.fill();
   }
-  // fine grain
+
   const img = g.getImageData(0, 0, size, size), d = img.data;
   for (let i = 0; i < d.length; i += 4) {
     const n = (Math.random() - 0.5) * 22;
@@ -112,10 +86,8 @@ function makeGround(size, mpp, withTarget) {
   return c;
 }
 
-// Painted range target centred on the world origin. Rings are 1/2/5 m so the
-// whole aiming mark sits inside the ~14 m field of view at 22x / 150 m.
 function paintTarget(g, cx, cy, mpp) {
-  const m = r => r / mpp;                      // metres -> px
+  const m = r => r / mpp;
   g.save();
   g.lineWidth = Math.max(1.5, m(0.12));
   [5, 2, 1].forEach((r, i) => {
@@ -131,10 +103,8 @@ function paintTarget(g, cx, cy, mpp) {
   g.restore();
 }
 
-// ── scene loading ─────────────────────────────────────────────────
 function loadDummy() {
-  // 2560 px at 2.5 cm/px = 64 m of ground at 40 px/m — close to what the camera
-  // actually resolves at 22x / 150 m (~63 px/m), so the feed looks sharp.
+
   S.mpp = 0.025;
   S.ground = makeGround(2560, S.mpp, true);
   S.target = { n: 0, e: 0 };
@@ -149,8 +119,7 @@ function loadImage(file, groundWidthM) {
     const g = c.getContext('2d');
     g.drawImage(im, 0, 0);
     S.mpp = groundWidthM / im.width;
-    // Put a subtle aim-point marker at the centre so the trainee has something
-    // to engage; the imagery itself supplies the tracking features.
+
     paintTarget(g, im.width / 2, im.height / 2, S.mpp);
     S.ground = c;
     S.target = { n: 0, e: 0 };
@@ -162,13 +131,11 @@ function loadImage(file, groundWidthM) {
   im.src = url;
 }
 
-// ── render one frame into the app's offscreen canvas ──────────────
 function renderScene() {
   if (!S.ground) return;
   if (VC.width !== 854 || VC.height !== 480) { VC.width = 854; VC.height = 480; }
   const W = VC.width, H = VC.height;
 
-  // hover shake: small translation + heading wobble, scaled by the Shake slider
   const k = S.shake;
   S.t += 1 / 15;
   const shN = k * (0.22 * Math.sin(S.t * 1.7) + 0.10 * Math.sin(S.t * 4.3 + 1));
@@ -179,10 +146,9 @@ function renderScene() {
   const h = (S.drone.hdg + shH) * D2R;
   const zoomEl = E('zoom');
   const zoom = zoomEl ? parseFloat(zoomEl.value) : 22;
-  const P = W / (2 * S.drone.alt) * zoom;        // px per metre — matches computeAim
+  const P = W / (2 * S.drone.alt) * zoom;
   const mpp = S.mpp, gW = S.ground.width, gH = S.ground.height;
 
-  // ground image px -> world metres (north up, origin at image centre)
   const a0 = 0 - Dn + (gH / 2) * mpp;
   const b0 = 0 - De - (gW / 2) * mpp;
   const cs = Math.cos(h), sn = Math.sin(h);
@@ -199,7 +165,6 @@ function renderScene() {
   vx.drawImage(S.ground, 0, 0);
   vx.setTransform(1, 0, 0, 1, 0, 0);
 
-  // light sensor grain so the feed does not look synthetic
   vx.globalAlpha = 0.05;
   for (let i = 0; i < 120; i++) {
     vx.fillStyle = Math.random() < 0.5 ? '#fff' : '#000';
@@ -208,7 +173,6 @@ function renderScene() {
   vx.globalAlpha = 1;
 }
 
-// ── simulated telemetry ───────────────────────────────────────────
 function pushTelemetry() {
   const gust = 1 + 0.18 * Math.sin(S.t * 0.7) + 0.08 * Math.sin(S.t * 2.9);
   telemetry.altAGL = S.drone.alt;
@@ -228,38 +192,32 @@ function pushTelemetry() {
   try { updateHUD(); updateStatus(); } catch (e) {}
 }
 
-// ── main loop (15 fps, like the real feed) ────────────────────────
 function tick() {
   if (!S.on) return;
   flyFromKeys();
   applyStick();
   renderScene();
-  // The round is drawn into the frame BEFORE the tracker runs, so it appears in
-  // the feed just as it would through the real camera.
+
   try { drawFall(); } catch (e) { console.error('[SIM/fall]', e); S.fall = null; }
   pushTelemetry();
   try { processFrame(); } catch (e) { console.error('[SIM]', e); }
   S.raf = setTimeout(tick, 1000 / 15);
 }
 
-// ── flying ────────────────────────────────────────────────────────
-// Continuous stick flying. Right stick moves the aircraft over the ground
-// (which is what walks the blue camera-centre onto the green aim point), left
-// stick yaws and changes height.
 function applyStick() {
   const st = S.stick;
   let fwd = 0, right = 0, yaw = 0, climb = 0;
-  if (S.map === 'rzz') {            // common: right stick = Z (x) / RZ (y)
+  if (S.map === 'rzz') {
     right = st.z;  fwd = -st.rz;  yaw = st.x;  climb = -st.y;
-  } else if (S.map === 'xy') {      // right stick reported as X/Y
+  } else if (S.map === 'xy') {
     right = st.x;  fwd = -st.y;   yaw = st.z;  climb = -st.rz;
-  } else if (S.map === 'rxry') {    // right stick reported as RX/RY
+  } else if (S.map === 'rxry') {
     right = st.rx; fwd = -st.ry;  yaw = st.x;  climb = -st.y;
   }
-  // hat/dpad always helps
+
   right += st.hatx; fwd += -st.haty;
 
-  const RATE = 2.2;                 // metres/second at full deflection
+  const RATE = 2.2;
   const dt = 1 / 15;
   if (fwd || right) {
     const h = S.drone.hdg * D2R;
@@ -286,7 +244,7 @@ function showStickReadout() {
 }
 
 function flyFromKeys() {
-  const step = 0.35;                              // metres per frame
+  const step = 0.35;
   const h = S.drone.hdg * D2R;
   let f = 0, r = 0;
   if (S.keys.ArrowUp) f += step;
@@ -304,11 +262,6 @@ function nudge(fwd, right) {
   S.drone.e += s * (fwd * Math.sin(h) + right * Math.sin(h + Math.PI / 2));
 }
 
-// ── the drop ──────────────────────────────────────────────────────
-// Full fall trajectory (not just the endpoint) so the round can be animated
-// falling away from the aircraft. Same integrator and forces as the app's
-// rk4Drop; the endpoint of this trajectory IS the impact, so what the trainee
-// watches and what gets scored are the same thing.
 function fallTrajectory(h, mass, cd, area, wSpd) {
   const DT = 0.005, G = 9.80665;
   let x = 0, y = h, vx0 = 0, vy = 0, t = 0;
@@ -337,15 +290,12 @@ function fallTrajectory(h, mass, cd, area, wSpd) {
   return path;
 }
 
-// Integrates the fall with TRUTH parameters (not the operator's dialled ones)
-// so the result rewards correct setup without ever being exactly perfect.
 function simulateDrop() {
-  if (!S.on || S.fall) return;                  // ignore while one is in the air
+  if (!S.on || S.fall) return;
   const alt = S.drone.alt;
   const mass = parseFloat(V('pm'));
   const cdDial = getEffCd(), areaDial = parseFloat(V('pa'));
 
-  // truth: drag within ~12% of dialled, wind gusting ~15% and veering a few degrees
   const cdT = cdDial * (0.88 + Math.random() * 0.24);
   const areaT = areaDial * (0.92 + Math.random() * 0.16);
   const wsT = S.wind.spd * (0.85 + Math.random() * 0.30);
@@ -354,7 +304,6 @@ function simulateDrop() {
   const path = fallTrajectory(alt, mass, cdT, areaT, wsT);
   const drift = path[path.length - 1].x, tof = path[path.length - 1].t;
 
-  // release point + the drone's own residual motion carried by the round
   const dw = ((wdT + 180) % 360) * D2R;
   const relN = S.drone.n, relE = S.drone.e;
   const vN = telemetry.vx || 0, vE = telemetry.vy || 0;
@@ -368,7 +317,6 @@ function simulateDrop() {
   const dwn = missN * Math.cos(dw) + missE * Math.sin(dw);
   const crs = missN * Math.cos(dw + Math.PI / 2) + missE * Math.sin(dw + Math.PI / 2);
 
-  // Hand it to the animator; scoring happens when it lands.
   S.fall = {
     path, dw, relN, relE, vN, vE, alt, tof,
     t0: performance.now(), impN, impE,
@@ -378,8 +326,6 @@ function simulateDrop() {
   showBanner('ROUND AWAY'); hideBanner(1200);
 }
 
-// Draws the falling round (and the impact burst) into the video frame, so it
-// appears in the feed exactly as it would through the real camera.
 function drawFall() {
   const f = S.fall; if (!f) return;
   const W = VC.width, H = VC.height;
@@ -388,31 +334,29 @@ function drawFall() {
   const zoom = parseFloat(V('zoom'));
   const h = S.drone.hdg * D2R, cs = Math.cos(h), sn = Math.sin(h);
 
-  // world -> screen for a point at height `hgt` above ground
   const project = (n, e, hgt) => {
-    const dist = Math.max(6, f.alt - hgt);            // metres from the camera
+    const dist = Math.max(6, f.alt - hgt);
     const P = W / (2 * dist) * zoom;
     const dn = n - S.drone.n, de = e - S.drone.e;
     const up = dn * cs + de * sn;
     const rt = dn * Math.cos(h + Math.PI / 2) + de * Math.sin(h + Math.PI / 2);
     return { x: W / 2 + rt * P, y: H / 2 - up * P };
   };
-  const at = t => {                                    // trajectory sample at time t
+  const at = t => {
     const p = f.path;
     let i = Math.min(p.length - 1, Math.max(0, Math.round(t / f.tof * (p.length - 1))));
     return p[i];
   };
 
   if (tSec < f.tof) {
-    // ── in flight ──────────────────────────────────────────────
+
     const s = at(tSec);
     const n = f.relN + s.x * Math.cos(f.dw) + f.vN * s.t;
     const e = f.relE + s.x * Math.sin(f.dw) + f.vE * s.t;
     const pt = project(n, e, s.y);
-    const frac = s.y / f.alt;                          // 1 at release -> 0 at impact
+    const frac = s.y / f.alt;
     const size = 3.5 + 17 * frac;
 
-    // motion trail
     for (let k = 1; k <= 6; k++) {
       const tt = tSec - k * 0.06; if (tt <= 0) break;
       const q = at(tt);
@@ -423,7 +367,7 @@ function drawFall() {
       vx.fillStyle = `rgba(25,25,30,${0.30 * (1 - k / 7)})`;
       vx.beginPath(); vx.arc(qp.x, qp.y, qs, 0, 7); vx.fill();
     }
-    // the round
+
     vx.fillStyle = '#1b1b20';
     vx.beginPath(); vx.arc(pt.x, pt.y, size, 0, 7); vx.fill();
     vx.strokeStyle = 'rgba(120,124,134,0.9)'; vx.lineWidth = Math.max(1, size * 0.12);
@@ -431,7 +375,6 @@ function drawFall() {
     vx.fillStyle = 'rgba(190,196,206,0.55)';
     vx.beginPath(); vx.arc(pt.x - size * 0.28, pt.y - size * 0.3, size * 0.32, 0, 7); vx.fill();
 
-    // growing shadow on the ground at the predicted impact point
     const gp = project(f.impN, f.impE, 0);
     const gs = 2 + 7 * (1 - frac);
     vx.fillStyle = `rgba(0,0,0,${0.35 * (1 - frac)})`;
@@ -439,8 +382,7 @@ function drawFall() {
     return;
   }
 
-  // ── impact ─────────────────────────────────────────────────
-  if (f.boom < 0) {                                   // first frame after landing
+  if (f.boom < 0) {
     f.boom = now;
     bakeImpact(f.impN, f.impE);
     const r = f.res;
@@ -455,7 +397,7 @@ function drawFall() {
   const k = (now - f.boom) / 1000;
   const gp = project(f.impN, f.impE, 0);
   if (k < 1.3) {
-    // dust burst + expanding rings
+
     const e1 = Math.min(1, k / 0.9);
     vx.save();
     for (let i = 0; i < 22; i++) {
@@ -472,11 +414,10 @@ function drawFall() {
     });
     vx.restore();
   } else {
-    S.fall = null;                                     // done
+    S.fall = null;
   }
 }
 
-// Burn the crater into the terrain so it persists and tracks with the ground.
 function bakeImpact(n, e) {
   const g = S.ground.getContext('2d');
   const x = S.ground.width / 2 + e / S.mpp;
@@ -495,7 +436,6 @@ function bakeImpact(n, e) {
   }
 }
 
-// ── UI wiring ─────────────────────────────────────────────────────
 function status(html, cls) {
   const b = E('simR'); b.classList.add('show');
   b.style.color = cls === 'err' ? 'var(--rd)' : cls === 'warn' ? 'var(--gd)' : 'var(--gn)';
@@ -557,7 +497,7 @@ function bindUI() {
   E('simLeft').addEventListener('click', () => nudge(0, -1));
   E('simRight').addEventListener('click', () => nudge(0, 1));
   E('simCtr').addEventListener('click', () => {
-    // fly straight onto the computed aim point (teaching aid)
+
     if (!result || !aimPoint) { status('Compute an aim first.', 'warn'); return; }
     const P = VC.width / (2 * S.drone.alt) * parseFloat(V('zoom'));
     const dx = (aimPoint.x - MC.width / 2) * (VC.width / MC.width) / P;
@@ -571,7 +511,7 @@ function bindUI() {
     S.fall = null;
     loadDummy();
     if (S.scene === 'sat') status('Reloaded dummy range — reload your image for satellite mode.', 'warn');
-    S.drone.n = (Math.random() - 0.5) * 9;   // a few metres off the target
+    S.drone.n = (Math.random() - 0.5) * 9;
     S.drone.e = (Math.random() - 0.5) * 9;
     S.drone.hdg = Math.random() * 360;
     try { E('clearBtn').click(); } catch (e) {}
