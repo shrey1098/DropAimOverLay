@@ -37,7 +37,17 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // GATE: nothing starts on an unactivated device — no feed, no telemetry,
+        // GATE 1: the APK must be the one we signed. A cracked build patches the
+        // licence check out; it cannot reproduce the signing certificate. Fails
+        // open when no fingerprint is configured — see Integrity.
+        Integrity.logFingerprint(this)
+        if (!Integrity.ok(this)) {
+            Log.e(TAG, "refusing to start: signature mismatch")
+            finish()
+            return
+        }
+
+        // GATE 2: nothing starts on an unactivated device — no feed, no telemetry,
         // no targeting. Re-checked every launch against this device's fingerprint,
         // so a copied licence file does not travel to another GCS.
         if (!Licence.isActivated(this)) {

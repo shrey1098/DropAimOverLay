@@ -27,8 +27,17 @@ class ExportReceiver : BroadcastReceiver() {
 
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != ACTION) return
+        // The token comes from BuildConfig, injected from a git-ignored
+        // keystore.properties — never from source. This repository has been
+        // public, and a token committed here would have been worthless the
+        // moment it was pushed.
+        val expected = BuildConfig.EXPORT_TOKEN
+        if (expected.isEmpty()) {
+            Log.w(TAG, "export refused: no token configured in this build")
+            return
+        }
         val token = intent.getStringExtra("token")
-        if (token != Config.EXPORT_TOKEN) {
+        if (token != expected) {
             Log.w(TAG, "export refused: bad token")
             return
         }

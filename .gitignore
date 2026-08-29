@@ -2,3 +2,9 @@ drops.jsonl
 tools/dropaim-private.pem
 tools/dropaim-public.txt
 tools/issued-licences.csv
+
+# Release signing and build-time secrets — never commit these.
+# The repository has been public; anything here would be worthless once pushed.
+android/keystore.properties
+*.jks
+*.keystore

@@ -3,9 +3,29 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// ── Secrets, kept OUT of the repository ───────────────────────────────────────
+// android/keystore.properties is git-ignored. Without it the project still
+// builds — debug is signed with the throwaway debug key and the export token is
+// blank, which DISABLES the export rather than shipping a known one. That
+// matters because this repository has been public: any token committed here
+// would be worthless the moment it was pushed.
+//
+//   storeFile=C:/keys/dropaim-release.jks
+//   storePassword=...
+//   keyAlias=dropaim
+//   keyPassword=...
+//   exportToken=<a long random string>
+//   releaseSignatureSha256=          # fill in after the first release build
+def secretsFile = rootProject.file('keystore.properties')
+def secrets = new Properties()
+if (secretsFile.exists()) secrets.load(new FileInputStream(secretsFile))
+def haveKeystore = secretsFile.exists() && secrets['storeFile'] &&
+                   rootProject.file(secrets['storeFile']).exists()
+
 android {
     namespace 'com.dropaim.app'
     compileSdk 34
+    buildFeatures { buildConfig true }
 
     defaultConfig {
         applicationId "com.dropaim.app"
@@ -15,10 +35,41 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        if (haveKeystore) {
+            release {
+                storeFile     rootProject.file(secrets['storeFile'])
+                storePassword secrets['storePassword']
+                keyAlias      secrets['keyAlias']
+                keyPassword   secrets['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Readable on purpose: a field fault is diagnosed from this build,
+            // and an obfuscated stack trace on a ground station with no adb is
+            // no use to anyone.
+            buildConfigField "String", "EXPORT_TOKEN", "\"${secrets['exportToken'] ?: ''}\""
+            buildConfigField "String", "RELEASE_SIG",  "\"\""
+        }
         release {
-            minifyEnabled false
+            // R8: renames and strips. It does not make the app secure — it
+            // turns "read it over coffee" into real work. See proguard-rules.pro
+            // for the handful of things that must keep their names.
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            buildConfigField "String", "EXPORT_TOKEN", "\"${secrets['exportToken'] ?: ''}\""
+            buildConfigField "String", "RELEASE_SIG",  "\"${secrets['releaseSignatureSha256'] ?: ''}\""
+            if (haveKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                // Better a loud warning than an unsigned release nobody can install.
+                logger.warn("WARNING: android/keystore.properties missing or storeFile not found — " +
+                            "the release APK will be UNSIGNED and will not install. See android/README.md.")
+            }
         }
     }
     compileOptions {
@@ -41,7 +92,47 @@ tasks.register('syncWebAssets', Copy) {
     from "${rootProject.projectDir}/../public"
     into "${projectDir}/src/main/assets/www"
     include 'index.html', 'sim.js', 'manifest.json', 'icon.svg'
+    // Always re-copy. The release build strips comments from these files IN
+    // PLACE, so an up-to-date check on an unchanged source would leave the
+    // stripped copy behind for the next debug build — or, worse, leave a debug
+    // copy in a release APK.
+    outputs.upToDateWhen { false }
+}
 
+// ── Release only: remove the comments from the shipped web app ───────────────
+// The ballistics ship as readable JavaScript inside the APK; the comments
+// explaining WHY each constant is what it is are the part worth stealing. This
+// does not obfuscate — see tools/strip-comments.js for why it deliberately does
+// not try to.
+tasks.register('stripWebAssets') {
+    dependsOn 'syncWebAssets'
+    doLast {
+        if (project.hasProperty('skipStrip')) {
+            logger.warn('stripWebAssets: SKIPPED (-PskipStrip). This release APK ships commented source.')
+            return
+        }
+        def dir  = file("${projectDir}/src/main/assets/www")
+        def tool = file("${rootProject.projectDir}/../tools/strip-comments.js")
+        if (!tool.exists()) throw new GradleException("missing ${tool} — the android/ project must sit inside the full repo clone")
+        ['index.html', 'sim.js'].each { name ->
+            def src = new File(dir, name)
+            if (!src.exists()) return
+            def out = new File(dir, name + '.tmp')
+            try {
+                exec {
+                    commandLine 'node', tool.absolutePath, src.absolutePath, out.absolutePath
+                }
+            } catch (Exception e) {
+                throw new GradleException(
+                    "stripWebAssets needs Node.js on PATH and could not run it (${e.message}).\n" +
+                    "Install Node, or build with -PskipStrip=true and accept that the release APK\n" +
+                    "ships the commented source.")
+            }
+            src.delete()
+            out.renameTo(src)
+        }
+        logger.lifecycle('stripWebAssets: comments removed from the packaged web app')
+    }
 }
 
 // A Copy task whose source is missing is skipped as NO-SOURCE — and a doLast
@@ -66,7 +157,12 @@ tasks.register('verifyWebAssets') {
 // merge*Assets ones, and they can run without waiting for the copy.
 tasks.named('preBuild') { dependsOn 'verifyWebAssets' }
 tasks.configureEach { t ->
-    if (t.name ==~ /merge.*Assets/) t.dependsOn('verifyWebAssets')
+    if (t.name ==~ /merge.*Assets/) {
+        t.dependsOn('verifyWebAssets')
+        // Strip only for release. Debug stays readable so a field fault can
+        // still be diagnosed from the packaged file.
+        if (t.name.toLowerCase().contains('release')) t.dependsOn('stripWebAssets')
+    }
 }
 
 dependencies {

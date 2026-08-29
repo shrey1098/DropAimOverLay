@@ -128,6 +128,8 @@ object Config {
     fun metricsUrlConfigured(): Boolean =
         METRICS_URL.startsWith("https://") || METRICS_URL.startsWith("http://")
 
-    // Second gate on the USB export broadcast. Change this per build.
-    const val EXPORT_TOKEN  = "CHANGE-ME-EXPORT-TOKEN"
+    // The USB export token lives in BuildConfig.EXPORT_TOKEN, injected from a
+    // git-ignored android/keystore.properties. It is deliberately NOT here: a
+    // secret in a source file is only as private as the repository, and this
+    // one has been public. An unset token disables the export outright.
 }

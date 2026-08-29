@@ -153,6 +153,74 @@ multicast on Wi-Fi without one, which would hide a datalink that broadcasts to
 `x.x.x.255`. That is what `ACCESS_WIFI_STATE` and `CHANGE_WIFI_MULTICAST_STATE`
 in the manifest are for; neither prompts the user.
 
+## Release build: signing, R8, and what it protects
+
+`assembleDebug` is unchanged and needs no setup. A **release** build adds four
+things, and none of them make the app secure — they raise the cost of copying
+it from "read it over coffee" to real work. Anything that runs on hardware
+someone else owns can eventually be taken apart.
+
+### 1. Create a keystore, once
+
+```
+keytool -genkeypair -v -keystore dropaim-release.jks -alias dropaim \
+        -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Keep the .jks **off this repository and backed up**: lose it and you can never
+ship an update that installs over an existing one.
+
+### 2. android/keystore.properties (git-ignored)
+
+```
+storeFile=C:/keys/dropaim-release.jks
+storePassword=...
+keyAlias=dropaim
+keyPassword=...
+exportToken=<a long random string>
+releaseSignatureSha256=        # fill in after the first release build
+```
+
+Without this file the project still builds; the release APK is simply unsigned
+(with a warning) and the export is disabled. Nothing here is committed — the
+repository has been public, and a secret in a source file is only as private as
+the repository.
+
+### 3. What each part does
+
+| | Effect |
+|---|---|
+| **R8** (`minifyEnabled true`) | renames and strips the Kotlin. `jadx` no longer returns readable source |
+| **Comment stripping** | removes ~24% of the shipped web app: every comment explaining *why* a constant is what it is |
+| **Signature check** | the app refuses to run from a re-signed APK, once `releaseSignatureSha256` is set |
+| **Export token** | from BuildConfig, not source; unset disables the USB export outright |
+
+`proguard-rules.pro` keeps the handful of things reached by name rather than by
+a visible call — chiefly `UploadWorker`, which WorkManager instantiates from a
+class-name string and which would otherwise break in release only.
+
+The comment stripper is **not** a minifier and deliberately does not try to be:
+it deletes comments and trailing whitespace and touches nothing else. A minifier
+that mangles the aim solver and ships a subtly wrong solution to an aircraft is
+a far worse outcome than a readable APK, and the reward would be a few KB. Its
+output is verified to produce **bit-identical** ballistics.
+
+### 4. After the first release build
+
+`Integrity.logFingerprint` prints the APK's signing SHA-256 to logcat at
+startup. Put that value in `releaseSignatureSha256` and rebuild; the check is
+inert until then, because an integrity check that bricks a build nobody could
+yet configure is a self-inflicted outage.
+
+### Installing over an existing app
+
+**A release APK will not install over a debug one** — different signing key.
+Android requires an uninstall, and uninstalling **wipes the licence activation
+and every setting**: telemetry source, Bluetooth device, ports, camera URLs and
+any measured zoom. Note them first, then re-activate after installing.
+
+From then on, release-to-release updates install over the top normally.
+
 ## Browser CSS must render on Chrome/WebView 66
 
 Same reason as the JS floor below, and the failure is worse because it is
