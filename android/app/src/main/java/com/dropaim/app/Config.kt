@@ -121,12 +121,16 @@ object Config {
     const val VIDEO_Q       = 5                            // mjpeg quality (1 best .. 31 worst)
 
     // ── Usage metrics ────────────────────────────────────────────────
-    // Where the background uploader posts to. Leave as-is to disable uploading
-    // entirely (records still accumulate locally and can be pulled over USB).
-    // Must be https:// for anything leaving a controlled network.
-    const val METRICS_URL   = "REPLACE_WITH_YOUR_HTTPS_ENDPOINT"
-    fun metricsUrlConfigured(): Boolean =
-        METRICS_URL.startsWith("https://") || METRICS_URL.startsWith("http://")
+    // The collector lives in its own service and its own repository
+    // (dropaim-metrics): it holds fleet activity for every ground station,
+    // which is more sensitive than this app's source, and it has to be
+    // deployable and revocable without touching the app.
+    //
+    // The URL and its token come from BuildConfig, injected from a git-ignored
+    // android/keystore.properties, and the URL can be overridden per ground
+    // station in the settings panel. Neither is written here: a secret in a
+    // source file is only as private as the repository. Unset = uploading is
+    // off, and records still accumulate locally for the USB export.
 
     // The USB export token lives in BuildConfig.EXPORT_TOKEN, injected from a
     // git-ignored android/keystore.properties. It is deliberately NOT here: a

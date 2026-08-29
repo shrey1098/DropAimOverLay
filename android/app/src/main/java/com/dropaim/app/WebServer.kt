@@ -198,8 +198,9 @@ class WebServer(
             o.optJSONObject("cameraZooms")?.let { z ->
                 z.keys().forEach { k -> zooms[k] = z.optDouble(k, Double.NaN) }
             }
+            val murl = if (o.has("metricsUrl")) o.optString("metricsUrl", "") else null
             val err = Settings.save(ctx, mavPort, qgcPort, if (o.has("cameras")) urls else null,
-                                    src, bta, if (o.has("cameraZooms")) zooms else null)
+                                    src, bta, if (o.has("cameraZooms")) zooms else null, murl)
             if (err != null)
                 return jsonStatus(Response.Status.BAD_REQUEST,
                     JSONObject().put("ok", false).put("err", err).toString())

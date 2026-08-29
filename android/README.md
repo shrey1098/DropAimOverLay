@@ -153,6 +153,35 @@ multicast on Wi-Fi without one, which would hide a datalink that broadcasts to
 `x.x.x.255`. That is what `ACCESS_WIFI_STATE` and `CHANGE_WIFI_MULTICAST_STATE`
 in the manifest are for; neither prompts the user.
 
+## Usage metrics
+
+The collector is a **separate service in a separate repository**
+(`dropaim-metrics`). It holds fleet activity for every ground station — which
+aircraft flew, when, for how long — which is more sensitive than this app's
+source, and it has to be deployable, rotatable and revocable without touching
+the app.
+
+Neither the URL nor its token is written in source. Both come from BuildConfig,
+injected from the git-ignored `android/keystore.properties`:
+
+```
+metricsUrl=https://metrics.example.com/v1/metrics
+metricsToken=<the collector's METRICS_TOKEN>
+```
+
+The URL is also editable per ground station under **⚙ CONNECTION → SETTINGS →
+Usage collector**, so one build can report to a test collector and a live one.
+The field shows `uploading` or `off`.
+
+**`https://` only.** An `http://` URL is refused rather than silently accepted:
+the batch carries the fleet's activity and the shared token, and neither should
+cross a network in the clear. With no URL set, uploading is off and records
+still accumulate locally for the USB export.
+
+`UploadWorker` calls `Settings.load` itself. WorkManager can start it in a fresh
+process where MainActivity has never run, and without that the operator's
+override would be ignored and the batch would go to the compiled-in URL instead.
+
 ## Release build: signing, R8, and what it protects
 
 `assembleDebug` is unchanged and needs no setup. A **release** build adds four

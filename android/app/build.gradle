@@ -16,6 +16,8 @@ plugins {
 //   keyPassword=...
 //   exportToken=<a long random string>
 //   releaseSignatureSha256=          # fill in after the first release build
+//   metricsUrl=https://metrics.example.com/v1/metrics
+//   metricsToken=<the collector's METRICS_TOKEN>
 def secretsFile = rootProject.file('keystore.properties')
 def secrets = new Properties()
 if (secretsFile.exists()) secrets.load(new FileInputStream(secretsFile))
@@ -51,8 +53,10 @@ android {
             // Readable on purpose: a field fault is diagnosed from this build,
             // and an obfuscated stack trace on a ground station with no adb is
             // no use to anyone.
-            buildConfigField "String", "EXPORT_TOKEN", "\"${secrets['exportToken'] ?: ''}\""
-            buildConfigField "String", "RELEASE_SIG",  "\"\""
+            buildConfigField "String", "EXPORT_TOKEN",  "\"${secrets['exportToken'] ?: ''}\""
+            buildConfigField "String", "RELEASE_SIG",   "\"\""
+            buildConfigField "String", "METRICS_URL",   "\"${secrets['metricsUrl'] ?: ''}\""
+            buildConfigField "String", "METRICS_TOKEN", "\"${secrets['metricsToken'] ?: ''}\""
         }
         release {
             // R8: renames and strips. It does not make the app secure — it
@@ -61,8 +65,10 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            buildConfigField "String", "EXPORT_TOKEN", "\"${secrets['exportToken'] ?: ''}\""
-            buildConfigField "String", "RELEASE_SIG",  "\"${secrets['releaseSignatureSha256'] ?: ''}\""
+            buildConfigField "String", "EXPORT_TOKEN",  "\"${secrets['exportToken'] ?: ''}\""
+            buildConfigField "String", "RELEASE_SIG",   "\"${secrets['releaseSignatureSha256'] ?: ''}\""
+            buildConfigField "String", "METRICS_URL",   "\"${secrets['metricsUrl'] ?: ''}\""
+            buildConfigField "String", "METRICS_TOKEN", "\"${secrets['metricsToken'] ?: ''}\""
             if (haveKeystore) {
                 signingConfig signingConfigs.release
             } else {

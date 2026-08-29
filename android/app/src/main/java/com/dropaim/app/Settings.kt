@@ -30,6 +30,7 @@ object Settings {
     private const val K_ZOOM = "camera_zooms"
     private const val K_SRC  = "telemetry_source"
     private const val K_BT   = "bluetooth_address"
+    private const val K_MURL = "metrics_url"
 
     /** Where telemetry comes from. Not every ground station puts MAVLink on IP:
      *  the SIYI MK32 hands it to Android over a Bluetooth serial link. */
@@ -40,6 +41,10 @@ object Settings {
     @Volatile private var qgcPortV = Config.QGC_PORT
     @Volatile private var srcV     = SRC_UDP
     @Volatile private var btAddrV  = ""
+    /** Where the usage collector lives. Compiled-in default from BuildConfig,
+     *  overridable per ground station: one build can report to a test collector
+     *  and a live one without a rebuild. */
+    @Volatile private var metricsUrlV = ""
     /** camera id -> URL, only for cameras the operator has overridden. */
     @Volatile private var urls: Map<String, String> = emptyMap()
     /** camera id -> aim zoom, measured by the operator against a known ground
@@ -52,6 +57,13 @@ object Settings {
     val telemetrySource: String get() = srcV
     /** Empty means "pick the paired device that offers a serial port". */
     val bluetoothAddress: String get() = btAddrV
+
+    /** Effective collector URL: the operator's override, else the build's. */
+    val metricsUrl: String
+        get() = metricsUrlV.ifEmpty { BuildConfig.METRICS_URL }
+    /** Uploading is off unless a URL is set AND it is https. Anything leaving a
+     *  controlled network carries the fleet's activity and the shared token. */
+    fun metricsEnabled(): Boolean = metricsUrl.startsWith("https://")
 
     /** Config.cameras with any operator-set URLs and zooms applied. */
     val cameras: List<Config.Camera>
@@ -73,6 +85,7 @@ object Settings {
         qgcPortV = p.getInt(K_QGC, Config.QGC_PORT)
         srcV     = p.getString(K_SRC, SRC_UDP) ?: SRC_UDP
         btAddrV  = p.getString(K_BT, "") ?: ""
+        metricsUrlV = p.getString(K_MURL, "") ?: ""
         urls = try {
             val o = JSONObject(p.getString(K_URLS, "{}") ?: "{}")
             o.keys().asSequence().associateWith { o.getString(it) }
@@ -91,7 +104,8 @@ object Settings {
      */
     fun save(ctx: Context, mav: Int?, qgc: Int?, newUrls: Map<String, String>?,
              source: String? = null, btAddress: String? = null,
-             newZooms: Map<String, Double>? = null): String? {
+             newZooms: Map<String, Double>? = null,
+             metricsUrl: String? = null): String? {
         val m = mav ?: mavPortV
         val q = qgc ?: qgcPortV
         val s = (source ?: srcV).lowercase()
@@ -101,6 +115,11 @@ object Settings {
         // offers a serial port". Anything else has to look like a MAC.
         if (bt.isNotEmpty() && !Regex("^([0-9A-F]{2}:){5}[0-9A-F]{2}$").matches(bt))
             return "Bluetooth address must look like AA:BB:CC:11:22:33"
+        val mu = (metricsUrl ?: metricsUrlV).trim()
+        // Blank is legitimate: fall back to the compiled-in URL. http:// is
+        // refused outright — the token would cross the network in the clear.
+        if (mu.isNotEmpty() && !mu.startsWith("https://"))
+            return "metrics URL must start with https:// (got \"${mu.take(12)}…\")"
         if (m !in 1024..65535) return "MAVLink port must be between 1024 and 65535"
         if (q !in 1024..65535) return "QGC port must be between 1024 and 65535"
         // Both are UDP ports on this device; the same number for each would mean
@@ -130,9 +149,10 @@ object Settings {
         }
 
         mavPortV = m; qgcPortV = q; urls = clean; srcV = s; btAddrV = bt; zooms = zoomOut
+        metricsUrlV = mu
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt(K_MAV, m).putInt(K_QGC, q)
-            .putString(K_SRC, s).putString(K_BT, bt)
+            .putString(K_SRC, s).putString(K_BT, bt).putString(K_MURL, mu)
             .putString(K_URLS, JSONObject(clean as Map<*, *>).toString())
             .putString(K_ZOOM, JSONObject(zoomOut as Map<*, *>).toString())
             .apply()
@@ -144,7 +164,7 @@ object Settings {
     fun reset(ctx: Context) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         mavPortV = Config.MAVLINK_PORT; qgcPortV = Config.QGC_PORT; urls = emptyMap()
-        srcV = SRC_UDP; btAddrV = ""; zooms = emptyMap()
+        srcV = SRC_UDP; btAddrV = ""; zooms = emptyMap(); metricsUrlV = ""
         Log.i(TAG, "reset to defaults")
     }
 
@@ -166,6 +186,9 @@ object Settings {
             .put("telemetrySource", srcV)
             .put("bluetoothAddress", btAddrV)
             .put("bluetoothDevices", BluetoothLink.devicesJson())
+            .put("metricsUrl", metricsUrlV)
+            .put("defaultMetricsUrl", BuildConfig.METRICS_URL)
+            .put("metricsEnabled", metricsEnabled())
             .put("cameras", cams)
     }
 }

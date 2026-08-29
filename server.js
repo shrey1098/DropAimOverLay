@@ -48,6 +48,7 @@ const CONFIG = {
         { model:'C13', width:640, height:512, zoom:1, calibrated:false },
       ] },
   ],
+  metricsUrl: '',
   mavlinkPort: 14551,
   qgcPort:     14550,                            // QGC forwards here
   targetSys:   1,    // flight controller system id
@@ -203,6 +204,11 @@ function settingsJson(extra) {
     telemetrySource: 'udp',
     bluetoothAddress: '',
     bluetoothDevices: [],
+    // Uploading is an Android-only path; the bench build reports it as off
+    // rather than pretending to have a collector.
+    metricsUrl: CONFIG.metricsUrl || '',
+    defaultMetricsUrl: '',
+    metricsEnabled: false,
     cameras: CONFIG.cameras.map((c, i) => ({
       id: c.id, label: c.label, url: c.url,
       defaultUrl: DEFAULTS.cameraUrls[i],
@@ -267,6 +273,12 @@ app.post('/api/settings', (req, res) => {
     const qgc = b.qgcPort     === undefined ? CONFIG.qgcPort     : Number(b.qgcPort);
     const err = validateSettings(mav, qgc, b.cameras);
     if(err) return res.status(400).json({ ok:false, err });
+    if(b.metricsUrl !== undefined){
+      const mu = String(b.metricsUrl).trim();
+      if(mu && !mu.startsWith('https://'))
+        return res.status(400).json({ ok:false, err:'metrics URL must start with https://' });
+      CONFIG.metricsUrl = mu;
+    }
     if(b.telemetrySource && b.telemetrySource !== 'udp')
       return res.status(400).json({ ok:false, err:'this build supports UDP telemetry only — Bluetooth is Android' });
     // Measured aim scales, saved per sensor. Merged, not replaced: saving the

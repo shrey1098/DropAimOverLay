@@ -362,6 +362,7 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <div class="f"><label>MAVLink listen port <span id="setMavD">—</span></label><input type="text" id="setMav" inputmode="numeric" autocomplete="off"></div>
       <div class="f"><label>QGC port <span id="setQgcD">—</span></label><input type="text" id="setQgc" inputmode="numeric" autocomplete="off"></div>
       <div id="setCams" style="display:flex;flex-direction:column"></div>
+      <div class="f"><label>Usage collector <span id="setMetD">—</span></label><input type="text" id="setMet" autocomplete="off" spellcheck="false" placeholder="https://…" style="font-size:10px"></div>
       <div id="setMsg" style="display:none;font-size:9px;line-height:1.4;border-radius:2px;padding:6px 8px"></div>
       <button class="btn btn-gn" id="setSave">✓ SAVE &amp; APPLY</button>
       <button class="btn" id="setReset">↺ RESTORE DEFAULTS</button>
@@ -1134,6 +1135,13 @@ function paintSettings(){
     i.spellcheck=false; i.style.fontSize='10px';
     f.appendChild(l); f.appendChild(i); box.appendChild(f);
   });
+  const met=E('setMet');
+  if(met){
+    met.value = settings.metricsUrl || '';
+    met.placeholder = settings.defaultMetricsUrl || 'https://… (none set in this build)';
+    E('setMetD').textContent = settings.metricsEnabled ? 'uploading' : 'off';
+    E('setMetD').style.color = settings.metricsEnabled ? 'var(--gn)' : 'var(--mt)';
+  }
   E('setNote').textContent = settings.persisted === false
     ? 'Browser build: changes apply now but are not kept when the server restarts.'
     : 'Saved on this device and applied on every launch. Clear a URL to restore its built-in default.';
@@ -1228,6 +1236,7 @@ E('setSave').addEventListener('click', ()=>{
     mavlinkPort:      parseInt(E('setMav').value, 10),
     qgcPort:          parseInt(E('setQgc').value, 10),
     telemetrySource:  currentSrc(),
+    metricsUrl:       E('setMet') ? E('setMet').value.trim() : '',
     bluetoothAddress: E('setBtDev').value || '',
     cameras:          urls,
   }, 'Saving…');

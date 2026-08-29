@@ -24,7 +24,14 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
 
     override fun doWork(): Result {
         val ctx = applicationContext
-        if (!Config.metricsUrlConfigured()) return Result.success()   // nothing to do
+        // WorkManager can start this in a fresh process where MainActivity has
+        // never run, and Settings is only populated by load(). Without this the
+        // operator's collector override is ignored and the batch goes to the
+        // compiled-in URL instead. Cheap and idempotent.
+        Settings.load(ctx)
+        // No collector configured, or a non-https one: do nothing and keep the
+        // records. They still accumulate locally for the USB export.
+        if (!Settings.metricsEnabled()) return Result.success()
 
         val pending = Metrics.pending(ctx)
         if (pending.isEmpty()) return Result.success()
@@ -39,13 +46,20 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                 .put("records", arr)
                 .toString()
 
-            val c = (URL(Config.METRICS_URL).openConnection() as HttpURLConnection).apply {
+            val c = (URL(Settings.metricsUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 15000
                 readTimeout = 15000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("X-DropAim-Device", Licence.deviceId(ctx))
+                // Shared secret with the collector, injected at build time from
+                // a git-ignored file. The collector refuses an unauthenticated
+                // POST, so without it nothing uploads — which is the safe way
+                // round: records stay on the device rather than going somewhere
+                // unauthenticated.
+                if (BuildConfig.METRICS_TOKEN.isNotEmpty())
+                    setRequestProperty("Authorization", "Bearer " + BuildConfig.METRICS_TOKEN)
             }
             c.outputStream.use { it.write(body.toByteArray()) }
             val code = c.responseCode
