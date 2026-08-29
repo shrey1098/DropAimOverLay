@@ -69,6 +69,18 @@ class WebServer(
                 uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
                 uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
                 uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
+                // Setup check for the metrics collector: posts one marker by the
+                // real upload path. Blocking, but this is an HTTP worker thread,
+                // not the main one.
+                uri == "/api/metrics/test" && session.method == Method.POST -> {
+                    val r = UploadWorker.testUpload(ctx)
+                    json(JSONObject()
+                        .put("ok", r.ok).put("attempted", r.attempted)
+                        .put("sent", r.sent).put("detail", r.detail)
+                        .put("url", Settings.metricsUrl)
+                        .put("tokenSet", BuildConfig.METRICS_TOKEN.isNotEmpty())
+                        .toString())
+                }
                 // Read-only: opens its own sockets, looks, closes them. Does not
                 // touch the live telemetry path.
                 uri == "/api/mavscan" -> json(MavScan.run(ctx).put("platform", "android").toString())

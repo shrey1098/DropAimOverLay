@@ -259,6 +259,12 @@ function restartVideo() {
 
 app.get('/api/settings', (req, res) => res.json(settingsJson()));
 
+// The bench build has no uploader — say so rather than reporting a pass that
+// means nothing.
+app.post('/api/metrics/test', (req, res) => res.json({
+  ok:false, attempted:false, sent:0, tokenSet:false,
+  detail:'Uploading is an Android-only path; this browser build has no uploader to test.' }));
+
 app.post('/api/settings', (req, res) => {
   const b = req.body || {};
   const oldMav = CONFIG.mavlinkPort, oldQgc = CONFIG.qgcPort;

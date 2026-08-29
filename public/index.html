@@ -363,6 +363,8 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
       <div class="f"><label>QGC port <span id="setQgcD">—</span></label><input type="text" id="setQgc" inputmode="numeric" autocomplete="off"></div>
       <div id="setCams" style="display:flex;flex-direction:column"></div>
       <div class="f"><label>Usage collector <span id="setMetD">—</span></label><input type="text" id="setMet" autocomplete="off" spellcheck="false" placeholder="https://…" style="font-size:10px"></div>
+      <button class="btn" id="setMetTest">▲ TEST COLLECTOR</button>
+      <div id="setMetOut" style="display:none;font-size:9px;line-height:1.45;padding:5px 7px;border-radius:2px"></div>
       <div id="setMsg" style="display:none;font-size:9px;line-height:1.4;border-radius:2px;padding:6px 8px"></div>
       <button class="btn btn-gn" id="setSave">✓ SAVE &amp; APPLY</button>
       <button class="btn" id="setReset">↺ RESTORE DEFAULTS</button>
@@ -1243,6 +1245,26 @@ E('setSave').addEventListener('click', ()=>{
 });
 
 E('setReset').addEventListener('click', ()=>postSettings({reset:true}, 'Restoring defaults…'));
+
+// Setup check for the collector. Sends one marker record by the real upload
+// path, so a mismatched token or a wrong URL is found while standing at the
+// ground station rather than six hours later when the scheduled upload runs.
+E('setMetTest').addEventListener('click', async ()=>{
+  const btn=E('setMetTest'), out=E('setMetOut');
+  btn.disabled=true; btn.textContent='▲ TESTING…';
+  out.style.display=''; out.textContent='Posting a test record…';
+  out.style.color='var(--mt)'; out.style.border='1px solid var(--bd)'; out.style.background='var(--bg)';
+  let d;
+  try { d = await fetch('/api/metrics/test',{method:'POST'}).then(r=>r.json()); }
+  catch(e){ d = {ok:false, detail:'This build has no collector test endpoint — reinstall the current APK.'}; }
+  const good = d.ok && d.sent > 0;
+  out.textContent = (good?'✓ ':'✕ ') + (d.detail || 'no answer')
+    + (d.tokenSet===false ? '\nNo token is compiled into this build — set metricsToken in keystore.properties and rebuild.' : '');
+  out.style.color      = good ? 'var(--gn)' : 'var(--rd)';
+  out.style.border     = '1px solid ' + (good ? 'rgba(0,255,136,.3)' : 'rgba(255,59,85,.3)');
+  out.style.background = good ? 'rgba(0,255,136,.05)' : 'rgba(255,59,85,.05)';
+  btn.disabled=false; btn.textContent='▲ TEST COLLECTOR';
+});
 
 // ── MAVLINK SCAN ──────────────────────────────────────────────────
 // Read-only. Listens on every common MAVLink port at once and reports what the
