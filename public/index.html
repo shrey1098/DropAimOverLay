@@ -298,6 +298,22 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <div class="aimr" id="aimR"></div>
   </div></div>
 
+  <!-- Registration: fly a sighting shot, tap where it landed, SET. The aim
+       shifts by the measured miss so the next round centres. -->
+  <div class="sec"><div class="sh">⊕ REGISTRATION</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Corrects a systematic miss without touching payload settings. ARM at release, tap where the round landed, then SET. Repeat to converge.</div>
+    <button class="btn" id="markImpBtn">◎ ARM AT RELEASE</button>
+    <!-- No flex gap: it needs Chrome 84 and the fielded WebViews are older.
+         Margins do the same job everywhere. -->
+    <div style="display:flex">
+      <button class="btn" id="offsetBtn" style="flex:1;margin-right:5px">⊕ OFFSET: OFF</button>
+      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px;margin-right:5px" title="shift the aim by the last measured miss">SET</button>
+      <button class="btn btn-rd" id="offClrBtn" style="width:auto;padding:8px 10px" title="zero the offset">0</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">offset <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
+    <div class="aimr" id="offR"></div>
+  </div></div>
+
   <div class="sec"><div class="sh">🔒 POSITION LOCK</div><div class="sb">
     <div style="font-size:9px;color:var(--mt);line-height:1.4">LOCK holds position (BRAKE) — enabled only when 🔵 is on 🟢. UNLOCK returns to LOITER.</div>
     <button class="btn btn-rd" id="lockBtn" disabled style="opacity:.4">🔒 LOCK — ALIGN FIRST</button>
@@ -396,6 +412,19 @@ let targetMark      = null; // {x,y} canvas pixels
 let targetMarkVideo = null; // {x,y} video pixels (for tracker)
 let aimPoint        = null; // {x,y} canvas pixels
 let result          = null; // physics result
+// Registration OFFSET (aim bias) — held in the WIND frame, metres, and rotated
+// into world on every solve so it stays aligned as the wind backs or veers. A
+// bias stored in world coords would silently become wrong the moment the wind
+// shifted, which is exactly when the operator is least likely to notice.
+let offsetOn        = false;
+let biasDown        = 0;    // + = aim further downwind
+let biasCross       = 0;    // + = aim further crosswind (90° cw of downwind)
+// Snapshot taken when ARM is pressed at release. The round is in the air for a
+// few seconds; heading, altitude and zoom can all move before it lands, and the
+// miss must be measured against the geometry that was flown, not the geometry
+// that happens to be live when the operator taps.
+let armedShot       = null;
+let lastMiss        = null; // {down,cross,m,bearing} from the most recent impact mark
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -749,8 +778,17 @@ function computeAim(silent=false){
   const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
 
   // Aim vector in world coords (from target to where drone should be)
-  const aimN=-dNorth-camOffN;  // upwind + camera offset
-  const aimE=-dEast -camOffE;
+  let aimN=-dNorth-camOffN;  // upwind + camera offset
+  let aimE=-dEast -camOffE;
+
+  // Registration OFFSET: rotate the wind-frame bias into world and add it, so
+  // the green marker the operator flies to already carries the correction.
+  const offApplied = offsetOn && (biasDown!==0 || biasCross!==0);
+  if(offApplied){
+    const dwR=((wDir+180)%360)*PI/180;
+    aimN += biasDown*Math.cos(dwR) + biasCross*Math.cos(dwR+PI/2);
+    aimE += biasDown*Math.sin(dwR) + biasCross*Math.sin(dwR+PI/2);
+  }
 
   // ── PROJECT TO CAMERA FRAME ───────────────────────────────────
   // Camera up = heading direction (what's "forward" for the drone)
@@ -783,7 +821,8 @@ function computeAim(silent=false){
     y: targetMark.y - aimCamUp * pxPerM,       // forward = -y (canvas Y inverted)
   };
 
-  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
+  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM,
+          offApplied, biasDown, biasCross};
 
   // Update HUD
   E('hDrift').textContent=drift.toFixed(1);
@@ -936,6 +975,12 @@ MC.addEventListener('pointerdown', e => {
   e.preventDefault();
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
+
+  // Armed for a sighting shot: this tap is the impact point, not a new target.
+  // Must come first — otherwise the tap moves the target and the miss is
+  // measured against the thing that just moved, which reads as zero.
+  if(armedShot){ recordImpact(cx,cy); return; }
+
   targetMark={x:cx,y:cy};
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
@@ -960,7 +1005,161 @@ E('calcBtn').addEventListener('click',()=>computeAim());
 E('clearBtn').addEventListener('click',()=>{
   targetMark=null;targetMarkVideo=null;aimPoint=null;result=null;prevGray=null;tplGray=null;
   E('aimR').classList.remove('show');
+  // Disarm too: with the target gone the next tap should place a new one, and
+  // an operator who has just pressed CLEAR TARGET is not expecting to mark an
+  // impact. The offset itself survives — it is a registration for the session,
+  // not a property of one target.
+  disarmShot();
   showBanner('TAP VIDEO TO MARK TARGET');
+});
+
+// ══════════════════════════════════════════════════════════════════
+// REGISTRATION OFFSET
+// ══════════════════════════════════════════════════════════════════
+// The ballistic model gets the drift roughly right; what it cannot know is the
+// set's own systematic error — a fin bias, a release lag, a camera boresight a
+// degree off. Registration measures that error from a sighting shot and folds it
+// into the aim, the same way a gunner registers a target: fire, observe, correct,
+// fire again. Two or three rounds converge.
+//
+//   ARM at release → tap where it landed → SET → the aim shifts by that miss.
+//
+// The offset is a session value. It is deliberately not persisted: it belongs to
+// this payload lot, this airframe and this day, and a stale bias silently applied
+// on the next sortie is worse than no bias at all.
+function offStatus(html, cls){
+  const b=E('offR'); b.classList.add('show');
+  b.style.color       = cls==='err' ? 'var(--rd)' : (cls==='warn' ? 'var(--gd)' : 'var(--gn)');
+  b.style.borderColor = cls==='err' ? 'rgba(255,59,85,.4)' : 'rgba(0,255,136,.3)';
+  b.style.background  = cls==='err' ? 'rgba(255,59,85,.06)' : 'rgba(0,255,136,.05)';
+  b.innerHTML = html;
+}
+function r2(v){ return Math.round(v*100)/100; }
+
+function refreshOffset(){
+  E('offVal').textContent = biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m';
+  const b=E('offsetBtn');
+  b.textContent='⊕ OFFSET: '+(offsetOn?'ON':'OFF');
+  b.classList.toggle('btn-gn', offsetOn);
+  // Re-solve silently so the green marker moves the instant the bias changes.
+  if(targetMark) computeAim(true);
+  try{ drawOverlay(); }catch(e){}
+}
+
+function disarmShot(){
+  armedShot=null;
+  const mb=E('markImpBtn');
+  mb.classList.remove('btn-gn');
+  mb.textContent='◎ ARM AT RELEASE';
+}
+
+// Pressed at the instant of release. Freezes the geometry the round was actually
+// dropped on, because that is what the impact has to be measured against.
+E('markImpBtn').addEventListener('click', ()=>{
+  if(armedShot){ disarmShot(); showBanner('impact marking off'); hideBanner(1600); return; }
+  if(!targetMark || !result){
+    offStatus('Mark a target and CALCULATE AIM before arming.','err');
+    return;
+  }
+  armedShot={
+    tx: targetMark.x, ty: targetMark.y,
+    ppm: result.pxPerM,
+    hdg: telemetry.heading||0,
+    wdir: result.wDir,
+    // Both of these convert pixels to metres. If either moves before the round
+    // lands — the operator zooms in to see the splash, or rotates the tablet and
+    // the canvas resizes — the stored target pixel and the tapped impact pixel
+    // are no longer in the same scale, and the miss comes out wrong by that
+    // ratio while still looking like a perfectly ordinary number.
+    cw: MC.width,
+    zoom: parseFloat(V('zoom')),
+    // What the aim already carried, so the pure model error stays recoverable.
+    oD: result.offApplied ? result.biasDown  : 0,
+    oC: result.offApplied ? result.biasCross : 0,
+  };
+  const mb=E('markImpBtn');
+  mb.classList.add('btn-gn');
+  mb.textContent='◎ TAP WHERE IT LANDED';
+  offStatus('Armed at alt '+(telemetry.altAGL?telemetry.altAGL.toFixed(0):'—')+' m, wind '+result.wSpd.toFixed(1)+' m/s @ '+Math.round(result.wDir)+'°.<br><b>Tap the impact point on the video.</b>','warn');
+  showBanner('ARMED — TAP THE IMPACT POINT'); hideBanner(3000);
+});
+
+// Operator tapped where the round landed → miss vector, decomposed onto the wind
+// axis. Downwind is the calibration signal: + means it drifted PAST the target
+// (under-corrected), − means it fell short.
+function recordImpact(ix, iy){
+  const s=armedShot;
+  disarmShot();
+  if(!s) return;
+
+  // Refuse rather than report a wrong miss. There is no way to recover the
+  // measurement here — the pixels were captured through different optics — and a
+  // bad SET pushes the aim off by however far the guess was out.
+  if(MC.width!==s.cw || Math.abs(parseFloat(V('zoom'))-s.zoom)>1e-9){
+    offStatus('Video scale changed between release and impact (zoom or window size). The miss cannot be measured against the geometry that was flown — re-arm and repeat the shot.','err');
+    showBanner('SCALE CHANGED — MISS NOT MEASURED'); hideBanner(3400);
+    return;
+  }
+
+  const hdg=s.hdg*PI/180;
+  // Impact offset from the marked target, metres, camera frame. This assumes the
+  // aircraft held station between release and impact — which is the workflow,
+  // POSITION LOCK is engaged for the drop. If it drifted, the pixels moved under
+  // the mark and the measurement is worth nothing.
+  const camRt = (ix - s.tx)/s.ppm;    // +right on screen
+  const camUp = -(iy - s.ty)/s.ppm;   // +forward on screen (canvas Y inverted)
+  // Camera frame → world North/East, same basis computeAim projects through.
+  const missN = camUp*Math.cos(hdg) + camRt*Math.cos(hdg+PI/2);
+  const missE = camUp*Math.sin(hdg) + camRt*Math.sin(hdg+PI/2);
+  const miss_m = Math.hypot(missN, missE);
+  const bearing = (Math.atan2(missE, missN)*180/PI + 360) % 360;   // target→impact, °T
+  // Project onto the wind axis: downwind is where the wind blows TO.
+  const dw=(s.wdir+180)*PI/180;
+  const down  = missN*Math.cos(dw)     + missE*Math.sin(dw);
+  const cross = missN*Math.cos(dw+PI/2)+ missE*Math.sin(dw+PI/2);
+
+  lastMiss={down:r2(down), cross:r2(cross), m:r2(miss_m), bearing:Math.round(bearing)};
+
+  // Residual with the applied offset removed — the model's own error, unchanged
+  // by however much bias was dialled in. Shown so the operator can see whether
+  // the offset is doing the work or the model is.
+  const rawD=down - s.oD, rawC=cross - s.oC;
+  const rawLine = (s.oD||s.oC)
+    ? '<br>raw (no offset): <b>'+r2(Math.hypot(rawD,rawC)).toFixed(2)+' m</b> dw '+(rawD>=0?'+':'')+r2(rawD)+' · cr '+r2(rawC)
+    : '';
+  const verdict = down >  0.3 ? 'UNDER-corrected (drifted past target)'
+                : down < -0.3 ? 'OVER-corrected (fell short)'
+                : 'on the wind axis';
+
+  offStatus('Miss <b>'+lastMiss.m+' m</b> @ '+lastMiss.bearing+'°T<br>downwind '+(lastMiss.down>=0?'+':'')+lastMiss.down+' m · cross '+lastMiss.cross+' m'+rawLine+
+            '<br><span style="color:var(--gd)">'+verdict+'</span><br>Press SET to correct the aim by this miss.','ok');
+  showBanner('MISS '+lastMiss.m+' m — PRESS SET TO CORRECT'); hideBanner(3000);
+}
+
+E('offsetBtn').addEventListener('click', ()=>{ offsetOn=!offsetOn; refreshOffset(); });
+
+E('setOffBtn').addEventListener('click', ()=>{
+  if(!lastMiss){ showBanner('Mark an impact first'); hideBanner(2200); return; }
+  // Shift the aim by the NEGATIVE of the measured miss, so the next round
+  // centres. It accumulates, so repeated sighting shots converge rather than
+  // each one overwriting the last.
+  biasDown  = r2(biasDown  - lastMiss.down);
+  biasCross = r2(biasCross - lastMiss.cross);
+  if(!offsetOn) offsetOn=true;
+  // One miss feeds one SET. Without this a second press would apply the same
+  // correction twice and throw the aim out by the amount it just fixed.
+  lastMiss=null;
+  refreshOffset();
+  offStatus('Offset now <b>'+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m</b> (down/cross). Fly the next round on the green marker.','ok');
+  showBanner('OFFSET SET '+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m'); hideBanner(2600);
+});
+
+E('offClrBtn').addEventListener('click', ()=>{
+  biasDown=0; biasCross=0; offsetOn=false; lastMiss=null;
+  disarmShot();
+  refreshOffset();
+  E('offR').classList.remove('show');
+  showBanner('OFFSET CLEARED'); hideBanner(1800);
 });
 
 // ══════════════════════════════════════════════════════════════════
@@ -1080,6 +1279,10 @@ async function selectCamera(c){
   targetMark=null; targetMarkVideo=null; aimPoint=null; result=null;
   prevGray=null; tplGray=null;
   E('aimR').classList.remove('show');
+  // The armed snapshot holds a pixels-per-metre scale that belongs to the sensor
+  // being left behind. Measuring an impact against it would give a miss in the
+  // wrong units — and a plausible-looking number, which is the dangerous kind.
+  disarmShot();
   try{
     const r=await fetch('/api/camera',{method:'POST',headers:{'Content-Type':'application/json'},
                                        body:JSON.stringify({index:c.index})}).then(x=>x.json());
