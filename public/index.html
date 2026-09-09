@@ -245,6 +245,19 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
     <div class="aimr" id="aimR"></div>
   </div></div>
 
+  <div class="sec"><div class="sh">⊕ REGISTRATION</div><div class="sb">
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Corrects a systematic miss without touching payload settings. ARM at release, tap where the round landed, then SET. Repeat to converge.</div>
+    <button class="btn" id="markImpBtn">◎ ARM AT RELEASE</button>
+
+    <div style="display:flex">
+      <button class="btn" id="offsetBtn" style="flex:1;margin-right:5px">⊕ OFFSET: OFF</button>
+      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px;margin-right:5px" title="shift the aim by the last measured miss">SET</button>
+      <button class="btn btn-rd" id="offClrBtn" style="width:auto;padding:8px 10px" title="zero the offset">0</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">offset <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
+    <div class="aimr" id="offR"></div>
+  </div></div>
+
   <div class="sec"><div class="sh">🔒 POSITION LOCK</div><div class="sb">
     <div style="font-size:9px;color:var(--mt);line-height:1.4">LOCK holds position (BRAKE) — enabled only when 🔵 is on 🟢. UNLOCK returns to LOITER.</div>
     <button class="btn btn-rd" id="lockBtn" disabled style="opacity:.4">🔒 LOCK — ALIGN FIRST</button>
@@ -334,6 +347,13 @@ let targetMark      = null;
 let targetMarkVideo = null;
 let aimPoint        = null;
 let result          = null;
+
+let offsetOn        = false;
+let biasDown        = 0;
+let biasCross       = 0;
+
+let armedShot       = null;
+let lastMiss        = null;
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -619,8 +639,15 @@ function computeAim(silent=false){
   const camOffN=camFwd*Math.cos(hdgRad)-camRt*Math.sin(hdgRad);
   const camOffE=camFwd*Math.sin(hdgRad)+camRt*Math.cos(hdgRad);
 
-  const aimN=-dNorth-camOffN;
-  const aimE=-dEast -camOffE;
+  let aimN=-dNorth-camOffN;
+  let aimE=-dEast -camOffE;
+
+  const offApplied = offsetOn && (biasDown!==0 || biasCross!==0);
+  if(offApplied){
+    const dwR=((wDir+180)%360)*PI/180;
+    aimN += biasDown*Math.cos(dwR) + biasCross*Math.cos(dwR+PI/2);
+    aimE += biasDown*Math.sin(dwR) + biasCross*Math.sin(dwR+PI/2);
+  }
 
   const camUpN=Math.cos(hdgRad),     camUpE=Math.sin(hdgRad);
   const camRtN=Math.cos(hdgRad+PI/2),camRtE=Math.sin(hdgRad+PI/2);
@@ -643,7 +670,8 @@ function computeAim(silent=false){
     y: targetMark.y - aimCamUp * pxPerM,
   };
 
-  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM};
+  result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM,
+          offApplied, biasDown, biasCross};
 
   E('hDrift').textContent=drift.toFixed(1);
   E('hTOF').textContent=tof.toFixed(1);
@@ -775,6 +803,9 @@ MC.addEventListener('pointerdown', e => {
   e.preventDefault();
   const r=MC.getBoundingClientRect();
   const cx=e.clientX-r.left, cy=e.clientY-r.top;
+
+  if(armedShot){ recordImpact(cx,cy); return; }
+
   targetMark={x:cx,y:cy};
   const sx=VC.width/MC.width, sy=VC.height/MC.height;
   targetMarkVideo={x:cx*sx,y:cy*sy};
@@ -797,7 +828,123 @@ E('calcBtn').addEventListener('click',()=>computeAim());
 E('clearBtn').addEventListener('click',()=>{
   targetMark=null;targetMarkVideo=null;aimPoint=null;result=null;prevGray=null;tplGray=null;
   E('aimR').classList.remove('show');
+
+  disarmShot();
   showBanner('TAP VIDEO TO MARK TARGET');
+});
+
+function offStatus(html, cls){
+  const b=E('offR'); b.classList.add('show');
+  b.style.color       = cls==='err' ? 'var(--rd)' : (cls==='warn' ? 'var(--gd)' : 'var(--gn)');
+  b.style.borderColor = cls==='err' ? 'rgba(255,59,85,.4)' : 'rgba(0,255,136,.3)';
+  b.style.background  = cls==='err' ? 'rgba(255,59,85,.06)' : 'rgba(0,255,136,.05)';
+  b.innerHTML = html;
+}
+function r2(v){ return Math.round(v*100)/100; }
+
+function refreshOffset(){
+  E('offVal').textContent = biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m';
+  const b=E('offsetBtn');
+  b.textContent='⊕ OFFSET: '+(offsetOn?'ON':'OFF');
+  b.classList.toggle('btn-gn', offsetOn);
+
+  if(targetMark) computeAim(true);
+  try{ drawOverlay(); }catch(e){}
+}
+
+function disarmShot(){
+  armedShot=null;
+  const mb=E('markImpBtn');
+  mb.classList.remove('btn-gn');
+  mb.textContent='◎ ARM AT RELEASE';
+}
+
+E('markImpBtn').addEventListener('click', ()=>{
+  if(armedShot){ disarmShot(); showBanner('impact marking off'); hideBanner(1600); return; }
+  if(!targetMark || !result){
+    offStatus('Mark a target and CALCULATE AIM before arming.','err');
+    return;
+  }
+  armedShot={
+    tx: targetMark.x, ty: targetMark.y,
+    ppm: result.pxPerM,
+    hdg: telemetry.heading||0,
+    wdir: result.wDir,
+
+    cw: MC.width,
+    zoom: parseFloat(V('zoom')),
+
+    oD: result.offApplied ? result.biasDown  : 0,
+    oC: result.offApplied ? result.biasCross : 0,
+  };
+  const mb=E('markImpBtn');
+  mb.classList.add('btn-gn');
+  mb.textContent='◎ TAP WHERE IT LANDED';
+  offStatus('Armed at alt '+(telemetry.altAGL?telemetry.altAGL.toFixed(0):'—')+' m, wind '+result.wSpd.toFixed(1)+' m/s @ '+Math.round(result.wDir)+'°.<br><b>Tap the impact point on the video.</b>','warn');
+  showBanner('ARMED — TAP THE IMPACT POINT'); hideBanner(3000);
+});
+
+function recordImpact(ix, iy){
+  const s=armedShot;
+  disarmShot();
+  if(!s) return;
+
+  if(MC.width!==s.cw || Math.abs(parseFloat(V('zoom'))-s.zoom)>1e-9){
+    offStatus('Video scale changed between release and impact (zoom or window size). The miss cannot be measured against the geometry that was flown — re-arm and repeat the shot.','err');
+    showBanner('SCALE CHANGED — MISS NOT MEASURED'); hideBanner(3400);
+    return;
+  }
+
+  const hdg=s.hdg*PI/180;
+
+  const camRt = (ix - s.tx)/s.ppm;
+  const camUp = -(iy - s.ty)/s.ppm;
+
+  const missN = camUp*Math.cos(hdg) + camRt*Math.cos(hdg+PI/2);
+  const missE = camUp*Math.sin(hdg) + camRt*Math.sin(hdg+PI/2);
+  const miss_m = Math.hypot(missN, missE);
+  const bearing = (Math.atan2(missE, missN)*180/PI + 360) % 360;
+
+  const dw=(s.wdir+180)*PI/180;
+  const down  = missN*Math.cos(dw)     + missE*Math.sin(dw);
+  const cross = missN*Math.cos(dw+PI/2)+ missE*Math.sin(dw+PI/2);
+
+  lastMiss={down:r2(down), cross:r2(cross), m:r2(miss_m), bearing:Math.round(bearing)};
+
+  const rawD=down - s.oD, rawC=cross - s.oC;
+  const rawLine = (s.oD||s.oC)
+    ? '<br>raw (no offset): <b>'+r2(Math.hypot(rawD,rawC)).toFixed(2)+' m</b> dw '+(rawD>=0?'+':'')+r2(rawD)+' · cr '+r2(rawC)
+    : '';
+  const verdict = down >  0.3 ? 'UNDER-corrected (drifted past target)'
+                : down < -0.3 ? 'OVER-corrected (fell short)'
+                : 'on the wind axis';
+
+  offStatus('Miss <b>'+lastMiss.m+' m</b> @ '+lastMiss.bearing+'°T<br>downwind '+(lastMiss.down>=0?'+':'')+lastMiss.down+' m · cross '+lastMiss.cross+' m'+rawLine+
+            '<br><span style="color:var(--gd)">'+verdict+'</span><br>Press SET to correct the aim by this miss.','ok');
+  showBanner('MISS '+lastMiss.m+' m — PRESS SET TO CORRECT'); hideBanner(3000);
+}
+
+E('offsetBtn').addEventListener('click', ()=>{ offsetOn=!offsetOn; refreshOffset(); });
+
+E('setOffBtn').addEventListener('click', ()=>{
+  if(!lastMiss){ showBanner('Mark an impact first'); hideBanner(2200); return; }
+
+  biasDown  = r2(biasDown  - lastMiss.down);
+  biasCross = r2(biasCross - lastMiss.cross);
+  if(!offsetOn) offsetOn=true;
+
+  lastMiss=null;
+  refreshOffset();
+  offStatus('Offset now <b>'+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m</b> (down/cross). Fly the next round on the green marker.','ok');
+  showBanner('OFFSET SET '+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m'); hideBanner(2600);
+});
+
+E('offClrBtn').addEventListener('click', ()=>{
+  biasDown=0; biasCross=0; offsetOn=false; lastMiss=null;
+  disarmShot();
+  refreshOffset();
+  E('offR').classList.remove('show');
+  showBanner('OFFSET CLEARED'); hideBanner(1800);
 });
 
 let cameras = [], activeCam = null;
@@ -889,6 +1036,8 @@ async function selectCamera(c){
   targetMark=null; targetMarkVideo=null; aimPoint=null; result=null;
   prevGray=null; tplGray=null;
   E('aimR').classList.remove('show');
+
+  disarmShot();
   try{
     const r=await fetch('/api/camera',{method:'POST',headers:{'Content-Type':'application/json'},
                                        body:JSON.stringify({index:c.index})}).then(x=>x.json());
