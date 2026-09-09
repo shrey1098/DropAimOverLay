@@ -59,6 +59,7 @@ function stripCLike(src, opts = {}) {
       prev = '"';
       continue;
     }
+
     if (c === '`') {
       out += c; i++;
       let depth = 0;
@@ -116,7 +117,6 @@ function stripHash(src, opts = {}) {
       const c = line[i];
       if (inS) { if (c === '\\') i++; else if (c === inS) inS = null; continue; }
       if (c === '"' || c === "'") { inS = c; continue; }
-
       if (c === '#') {
 
         if (i === 0 && line[1] === '!') return line;
