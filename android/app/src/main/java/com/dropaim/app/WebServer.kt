@@ -59,6 +59,9 @@ class WebServer(
                 uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
                 uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
 
+                uri == "/api/bias" && session.method == Method.POST -> apiBias(session)
+                uri == "/api/bias" -> json(Settings.biasJson().toString())
+
                 uri == "/api/metrics/test" && session.method == Method.POST -> {
                     val r = UploadWorker.testUpload(ctx)
                     json(JSONObject()
@@ -145,6 +148,22 @@ class WebServer(
         return if (video.selectCamera(idx))
             json("""{"ok":true,"id":"${cam.id}","label":"${cam.label}","zoom":${cam.zoom},"calibrated":${cam.calibrated}}""")
         else jsonStatus(Response.Status.INTERNAL_ERROR, """{"ok":false,"err":"switch failed"}""")
+    }
+
+    private fun apiBias(session: IHTTPSession): Response {
+        val o = try { JSONObject(postBody(session)) } catch (_: Exception) {
+            return jsonStatus(Response.Status.BAD_REQUEST, """{"ok":false,"err":"malformed request"}""")
+        }
+        if (o.optBoolean("clear", false)) {
+            Settings.clearBias(ctx)
+            return json(JSONObject().put("ok", true).put("bias", Settings.biasJson()).toString())
+        }
+
+        val err = Settings.saveBias(ctx, o.optDouble("down", Double.NaN), o.optDouble("cross", Double.NaN))
+        return if (err != null)
+            jsonStatus(Response.Status.BAD_REQUEST, JSONObject().put("ok", false).put("err", err).toString())
+        else
+            json(JSONObject().put("ok", true).put("bias", Settings.biasJson()).toString())
     }
 
     private fun apiSaveSettings(session: IHTTPSession): Response {

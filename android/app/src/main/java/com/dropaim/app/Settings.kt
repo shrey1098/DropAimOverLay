@@ -15,6 +15,9 @@ object Settings {
     private const val K_SRC  = "telemetry_source"
     private const val K_BT   = "bluetooth_address"
     private const val K_MURL = "metrics_url"
+    private const val K_BIAS = "aim_bias"
+
+    private const val BIAS_LIMIT_M = 50.0
 
     const val SRC_UDP = "udp"
     const val SRC_BT  = "bluetooth"
@@ -29,6 +32,10 @@ object Settings {
     @Volatile private var urls: Map<String, String> = emptyMap()
 
     @Volatile private var zooms: Map<String, Double> = emptyMap()
+
+    @Volatile private var biasDownV  = 0.0
+    @Volatile private var biasCrossV = 0.0
+    @Volatile private var biasAtV    = 0L
 
     val mavlinkPort: Int get() = mavPortV
     val qgcPort: Int get() = qgcPortV
@@ -51,6 +58,31 @@ object Settings {
 
     fun zoomOverride(id: String): Double? = zooms[id]
 
+    fun biasJson(): JSONObject = JSONObject()
+        .put("saved", biasAtV > 0L)
+        .put("down", biasDownV)
+        .put("cross", biasCrossV)
+        .put("savedAt", biasAtV)
+
+    fun saveBias(ctx: Context, down: Double, cross: Double): String? {
+        if (!down.isFinite() || !cross.isFinite()) return "bias must be a number"
+        if (Math.abs(down) > BIAS_LIMIT_M || Math.abs(cross) > BIAS_LIMIT_M)
+            return "bias looks wrong ($down / $cross m) — expected within ±${BIAS_LIMIT_M.toInt()} m"
+        val at = System.currentTimeMillis()
+        biasDownV = down; biasCrossV = cross; biasAtV = at
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(K_BIAS, JSONObject().put("down", down).put("cross", cross).put("t", at).toString())
+            .apply()
+        Log.i(TAG, "saved bias down=$down cross=$cross")
+        return null
+    }
+
+    fun clearBias(ctx: Context) {
+        biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(K_BIAS).apply()
+        Log.i(TAG, "bias cleared")
+    }
+
     fun load(ctx: Context) {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mavPortV = p.getInt(K_MAV, Config.MAVLINK_PORT)
@@ -66,7 +98,19 @@ object Settings {
             val o = JSONObject(p.getString(K_ZOOM, "{}") ?: "{}")
             o.keys().asSequence().associateWith { o.getDouble(it) }
         } catch (e: Exception) { emptyMap() }
-        Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys}")
+
+        try {
+            val o = JSONObject(p.getString(K_BIAS, "{}") ?: "{}")
+            val d = o.optDouble("down", 0.0)
+            val c = o.optDouble("cross", 0.0)
+            val t = o.optLong("t", 0L)
+            if (t > 0L && d.isFinite() && c.isFinite() &&
+                Math.abs(d) <= BIAS_LIMIT_M && Math.abs(c) <= BIAS_LIMIT_M) {
+                biasDownV = d; biasCrossV = c; biasAtV = t
+            } else { biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L }
+        } catch (e: Exception) { biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L }
+        Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys} " +
+                   "bias=" + (if (biasAtV > 0L) "$biasDownV/$biasCrossV" else "none"))
     }
 
     fun save(ctx: Context, mav: Int?, qgc: Int?, newUrls: Map<String, String>?,
@@ -126,6 +170,7 @@ object Settings {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         mavPortV = Config.MAVLINK_PORT; qgcPortV = Config.QGC_PORT; urls = emptyMap()
         srcV = SRC_UDP; btAddrV = ""; zooms = emptyMap(); metricsUrlV = ""
+        biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L
         Log.i(TAG, "reset to defaults")
     }
 

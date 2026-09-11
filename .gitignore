@@ -1,4 +1,6 @@
 drops.jsonl
+
+bias.json
 tools/dropaim-private.pem
 tools/dropaim-public.txt
 tools/issued-licences.csv
