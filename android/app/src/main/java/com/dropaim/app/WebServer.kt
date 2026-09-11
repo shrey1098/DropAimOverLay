@@ -69,6 +69,11 @@ class WebServer(
                 uri == "/api/camera" && session.method == Method.POST -> apiSelectCamera(session)
                 uri == "/api/settings" && session.method == Method.POST -> apiSaveSettings(session)
                 uri == "/api/settings" -> json(Settings.toJson().put("platform", "android").toString())
+                // The registration bias. Its own endpoint rather than a field on
+                // /api/settings: the UI needs it on every page load, and the
+                // settings blob is only fetched when that panel is opened.
+                uri == "/api/bias" && session.method == Method.POST -> apiBias(session)
+                uri == "/api/bias" -> json(Settings.biasJson().toString())
                 // Setup check for the metrics collector: posts one marker by the
                 // real upload path. Blocking, but this is an HTTP worker thread,
                 // not the main one.
@@ -181,6 +186,28 @@ class WebServer(
      * actually changed is restarted, so editing a camera URL does not drop
      * telemetry.
      */
+    /**
+     * Save or clear the registration bias. It costs live rounds to establish, so
+     * it goes to SharedPreferences and survives the app being killed, the device
+     * being switched off and the battery going flat.
+     */
+    private fun apiBias(session: IHTTPSession): Response {
+        val o = try { JSONObject(postBody(session)) } catch (_: Exception) {
+            return jsonStatus(Response.Status.BAD_REQUEST, """{"ok":false,"err":"malformed request"}""")
+        }
+        if (o.optBoolean("clear", false)) {
+            Settings.clearBias(ctx)
+            return json(JSONObject().put("ok", true).put("bias", Settings.biasJson()).toString())
+        }
+        // NaN rather than 0.0 as the default: a missing field is a malformed
+        // request, not a request to register zero.
+        val err = Settings.saveBias(ctx, o.optDouble("down", Double.NaN), o.optDouble("cross", Double.NaN))
+        return if (err != null)
+            jsonStatus(Response.Status.BAD_REQUEST, JSONObject().put("ok", false).put("err", err).toString())
+        else
+            json(JSONObject().put("ok", true).put("bias", Settings.biasJson()).toString())
+    }
+
     private fun apiSaveSettings(session: IHTTPSession): Response {
         val body = postBody(session)
         val o = try { JSONObject(body) } catch (_: Exception) {

@@ -1,4 +1,6 @@
 drops.jsonl
+# The bench build's saved registration bias — a local measurement, not source.
+bias.json
 tools/dropaim-private.pem
 tools/dropaim-public.txt
 tools/issued-licences.csv

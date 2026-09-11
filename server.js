@@ -21,6 +21,7 @@ const net       = require('net');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
 const path      = require('path');
+const fs        = require('fs');
 
 // ── CONFIG ────────────────────────────────────────────────────────
 const CONFIG = {
@@ -259,6 +260,56 @@ function restartVideo() {
 
 app.get('/api/settings', (req, res) => res.json(settingsJson()));
 
+// ── REGISTRATION BIAS ─────────────────────────────────────────────
+// The set's own systematic error, measured from a sighting shot. It costs live
+// rounds to establish, so unlike the rest of this build's settings (which live
+// in memory and die with the process) it goes to a file: the Android build keeps
+// it in SharedPreferences, and the bench has to behave the same or it cannot be
+// used to rehearse the procedure.
+//
+// Same ±50 m limit as Settings.kt. A figure larger than that is not a
+// correction, it is a fault — and it would be dialled straight into the aim.
+const BIAS_FILE    = path.join(__dirname, 'bias.json');
+const BIAS_LIMIT_M = 50;
+const NO_BIAS      = { saved:false, down:0, cross:0, savedAt:0 };
+
+function loadBias() {
+  try {
+    const o = JSON.parse(fs.readFileSync(BIAS_FILE, 'utf8'));
+    const d = Number(o.down), c = Number(o.cross), t = Number(o.savedAt);
+    // Discard rather than carry: a corrupt figure would otherwise be offered to
+    // the operator as a valid registration.
+    if(!(t > 0) || !Number.isFinite(d) || !Number.isFinite(c) ||
+       Math.abs(d) > BIAS_LIMIT_M || Math.abs(c) > BIAS_LIMIT_M) return { ...NO_BIAS };
+    return { saved:true, down:d, cross:c, savedAt:t };
+  } catch(e) { return { ...NO_BIAS }; }
+}
+
+let bias = loadBias();
+if(bias.saved) console.log(`[BIAS] saved registration ${bias.down} / ${bias.cross} m (down/cross)`);
+
+app.get('/api/bias', (req, res) => res.json(bias));
+
+app.post('/api/bias', (req, res) => {
+  const b = req.body || {};
+  if(b.clear){
+    bias = { ...NO_BIAS };
+    try { fs.unlinkSync(BIAS_FILE); } catch(e) {}
+    console.log('[BIAS] cleared');
+    return res.json({ ok:true, bias });
+  }
+  const d = Number(b.down), c = Number(b.cross);
+  if(!Number.isFinite(d) || !Number.isFinite(c))
+    return res.status(400).json({ ok:false, err:'bias must be a number' });
+  if(Math.abs(d) > BIAS_LIMIT_M || Math.abs(c) > BIAS_LIMIT_M)
+    return res.status(400).json({ ok:false, err:`bias looks wrong (${d} / ${c} m) — expected within ±${BIAS_LIMIT_M} m` });
+  bias = { saved:true, down:d, cross:c, savedAt:Date.now() };
+  try { fs.writeFileSync(BIAS_FILE, JSON.stringify(bias)); }
+  catch(e){ return res.status(500).json({ ok:false, err:'could not write '+BIAS_FILE+': '+e.message }); }
+  console.log(`[BIAS] saved ${d} / ${c} m (down/cross)`);
+  res.json({ ok:true, bias });
+});
+
 // The bench build has no uploader — say so rather than reporting a pass that
 // means nothing.
 app.post('/api/metrics/test', (req, res) => res.json({
@@ -274,6 +325,11 @@ app.post('/api/settings', (req, res) => {
     CONFIG.mavlinkPort = DEFAULTS.mavlinkPort;
     CONFIG.qgcPort     = DEFAULTS.qgcPort;
     CONFIG.cameras.forEach((c, i) => { c.url = DEFAULTS.cameraUrls[i]; });
+    // Settings.reset() on Android clears every stored preference, the saved
+    // registration included. The bench has to do the same or "restore defaults"
+    // means something different depending on which build you are on.
+    bias = { ...NO_BIAS };
+    try { fs.unlinkSync(BIAS_FILE); } catch(e) {}
   } else {
     const mav = b.mavlinkPort === undefined ? CONFIG.mavlinkPort : Number(b.mavlinkPort);
     const qgc = b.qgcPort     === undefined ? CONFIG.qgcPort     : Number(b.qgcPort);

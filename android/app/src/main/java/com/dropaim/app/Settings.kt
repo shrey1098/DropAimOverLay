@@ -31,6 +31,12 @@ object Settings {
     private const val K_SRC  = "telemetry_source"
     private const val K_BT   = "bluetooth_address"
     private const val K_MURL = "metrics_url"
+    private const val K_BIAS = "aim_bias"
+
+    /** A registration that large is not a correction, it is a fault — a mistyped
+     *  figure, or an impact marked on the wrong part of the screen. Dialled into
+     *  the aim it would put the round somewhere nobody intended. */
+    private const val BIAS_LIMIT_M = 50.0
 
     /** Where telemetry comes from. Not every ground station puts MAVLink on IP:
      *  the SIYI MK32 hands it to Android over a Bluetooth serial link. */
@@ -51,6 +57,16 @@ object Settings {
      *  distance. Calibrating a sensor IS moving that slider, so the figure has
      *  to survive a restart or the calibration was never really done. */
     @Volatile private var zooms: Map<String, Double> = emptyMap()
+
+    /** Registration bias, wind frame, metres — the set's own systematic error,
+     *  measured from a sighting shot. Earned the hard way: it costs live rounds
+     *  to establish, so losing it to a flat battery would mean shooting the
+     *  sighting shots again. Stored, but NOT auto-applied — a bias from a
+     *  different payload lot or a different day is worse than none, so the
+     *  operator says when it goes back on. biasAtV of 0 means nothing saved. */
+    @Volatile private var biasDownV  = 0.0
+    @Volatile private var biasCrossV = 0.0
+    @Volatile private var biasAtV    = 0L
 
     val mavlinkPort: Int get() = mavPortV
     val qgcPort: Int get() = qgcPortV
@@ -79,6 +95,38 @@ object Settings {
      *  measured on this airframe beats one guessed from the resolution. */
     fun zoomOverride(id: String): Double? = zooms[id]
 
+    /** The saved registration, for the UI. `saved` false means there is none —
+     *  distinct from a saved bias that happens to be zero. */
+    fun biasJson(): JSONObject = JSONObject()
+        .put("saved", biasAtV > 0L)
+        .put("down", biasDownV)
+        .put("cross", biasCrossV)
+        .put("savedAt", biasAtV)
+
+    /**
+     * Persist a registration measured on this airframe. Returns null on success
+     * or a message naming what was wrong.
+     */
+    fun saveBias(ctx: Context, down: Double, cross: Double): String? {
+        if (!down.isFinite() || !cross.isFinite()) return "bias must be a number"
+        if (Math.abs(down) > BIAS_LIMIT_M || Math.abs(cross) > BIAS_LIMIT_M)
+            return "bias looks wrong ($down / $cross m) — expected within ±${BIAS_LIMIT_M.toInt()} m"
+        val at = System.currentTimeMillis()
+        biasDownV = down; biasCrossV = cross; biasAtV = at
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(K_BIAS, JSONObject().put("down", down).put("cross", cross).put("t", at).toString())
+            .apply()
+        Log.i(TAG, "saved bias down=$down cross=$cross")
+        return null
+    }
+
+    /** Forget the registration entirely. */
+    fun clearBias(ctx: Context) {
+        biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(K_BIAS).apply()
+        Log.i(TAG, "bias cleared")
+    }
+
     fun load(ctx: Context) {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mavPortV = p.getInt(K_MAV, Config.MAVLINK_PORT)
@@ -94,7 +142,20 @@ object Settings {
             val o = JSONObject(p.getString(K_ZOOM, "{}") ?: "{}")
             o.keys().asSequence().associateWith { o.getDouble(it) }
         } catch (e: Exception) { emptyMap() }
-        Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys}")
+        // A corrupt or out-of-range bias is discarded rather than carried: it
+        // would otherwise be offered as a valid registration and flown.
+        try {
+            val o = JSONObject(p.getString(K_BIAS, "{}") ?: "{}")
+            val d = o.optDouble("down", 0.0)
+            val c = o.optDouble("cross", 0.0)
+            val t = o.optLong("t", 0L)
+            if (t > 0L && d.isFinite() && c.isFinite() &&
+                Math.abs(d) <= BIAS_LIMIT_M && Math.abs(c) <= BIAS_LIMIT_M) {
+                biasDownV = d; biasCrossV = c; biasAtV = t
+            } else { biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L }
+        } catch (e: Exception) { biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L }
+        Log.i(TAG, "source=$srcV mavlink=$mavPortV qgc=$qgcPortV bt=$btAddrV overrides=${urls.keys} " +
+                   "bias=" + (if (biasAtV > 0L) "$biasDownV/$biasCrossV" else "none"))
     }
 
     /**
@@ -165,6 +226,7 @@ object Settings {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
         mavPortV = Config.MAVLINK_PORT; qgcPortV = Config.QGC_PORT; urls = emptyMap()
         srcV = SRC_UDP; btAddrV = ""; zooms = emptyMap(); metricsUrlV = ""
+        biasDownV = 0.0; biasCrossV = 0.0; biasAtV = 0L
         Log.i(TAG, "reset to defaults")
     }
 

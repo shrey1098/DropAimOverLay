@@ -301,16 +301,20 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   <!-- Registration: fly a sighting shot, tap where it landed, SET. The aim
        shifts by the measured miss so the next round centres. -->
   <div class="sec"><div class="sh">⊕ REGISTRATION</div><div class="sb">
-    <div style="font-size:9px;color:var(--mt);line-height:1.4">Corrects a systematic miss without touching payload settings. ARM at release, tap where the round landed, then SET. Repeat to converge.</div>
-    <button class="btn" id="markImpBtn">◎ ARM AT RELEASE</button>
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">Corrects a systematic miss without touching payload settings. To measure one: ARM at release, tap where the round landed, then SET — which saves it on this device. Repeat to converge.</div>
+    <button class="btn" id="markImpBtn">◎ NEW BIAS — ARM AT RELEASE</button>
     <!-- No flex gap: it needs Chrome 84 and the fielded WebViews are older.
          Margins do the same job everywhere. -->
     <div style="display:flex">
       <button class="btn" id="offsetBtn" style="flex:1;margin-right:5px">⊕ OFFSET: OFF</button>
-      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px;margin-right:5px" title="shift the aim by the last measured miss">SET</button>
-      <button class="btn btn-rd" id="offClrBtn" style="width:auto;padding:8px 10px" title="zero the offset">0</button>
+      <button class="btn btn-gd" id="setOffBtn" style="width:auto;padding:8px 10px" title="shift the aim by the last measured miss and save it">SET</button>
     </div>
-    <div style="font-size:9px;color:var(--mt);text-align:center">offset <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
+    <div style="display:flex">
+      <button class="btn btn-gd" id="applyBiasBtn" style="flex:1;margin-right:5px" title="load the bias saved on this device">✓ APPLY SAVED</button>
+      <button class="btn btn-rd" id="remBiasBtn" style="flex:1" title="forget the bias on this device">✕ REMOVE BIAS</button>
+    </div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">in use <span id="offVal" style="color:var(--gd)">0.0 / 0.0 m</span> down/cross</div>
+    <div style="font-size:9px;color:var(--mt);text-align:center">saved on device <span id="savedVal" style="color:var(--ac)">none</span></div>
     <div class="aimr" id="offR"></div>
   </div></div>
 
@@ -425,6 +429,9 @@ let biasCross       = 0;    // + = aim further crosswind (90° cw of downwind)
 // that happens to be live when the operator taps.
 let armedShot       = null;
 let lastMiss        = null; // {down,cross,m,bearing} from the most recent impact mark
+// What is stored on the device, which is NOT the same as what is in the aim. The
+// saved figure is offered; applying it is a deliberate act.
+let savedBias       = {saved:false, down:0, cross:0, savedAt:0};
 let telemetry       = {
   roll:0, pitch:0, yaw:0, heading:0,
   altAGL:null, groundspeed:0, vx:0, vy:0, vz:0,
@@ -1024,9 +1031,15 @@ E('clearBtn').addEventListener('click',()=>{
 //
 //   ARM at release → tap where it landed → SET → the aim shifts by that miss.
 //
-// The offset is a session value. It is deliberately not persisted: it belongs to
-// this payload lot, this airframe and this day, and a stale bias silently applied
-// on the next sortie is worse than no bias at all.
+// The bias is SAVED on the device and survives the app closing, the device being
+// switched off and the battery going flat — it costs live rounds to establish, so
+// losing it would mean shooting the sighting shots again.
+//
+// It is saved but NOT applied automatically. A registration belongs to a payload
+// lot, an airframe and a day; silently reapplying a week-old one is exactly the
+// failure this panel is meant to prevent. So there are three separate actions:
+// APPLY SAVED puts the stored figure back into the aim, NEW BIAS measures a fresh
+// one, and REMOVE BIAS forgets it.
 function offStatus(html, cls){
   const b=E('offR'); b.classList.add('show');
   b.style.color       = cls==='err' ? 'var(--rd)' : (cls==='warn' ? 'var(--gd)' : 'var(--gn)');
@@ -1036,6 +1049,31 @@ function offStatus(html, cls){
 }
 function r2(v){ return Math.round(v*100)/100; }
 
+// Short and unambiguous. toLocaleString varies by WebView locale and can run to
+// thirty characters, which does not fit the panel on a controller screen.
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function stamp(ms){
+  const d=new Date(ms);
+  return d.getDate()+' '+MONTHS[d.getMonth()]+' '+
+         String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+
+function refreshSaved(){
+  const s=E('savedVal');
+  if(savedBias.saved){
+    s.textContent=savedBias.down.toFixed(1)+' / '+savedBias.cross.toFixed(1)+' m · '+stamp(savedBias.savedAt);
+    s.style.color='var(--ac)';
+  } else {
+    s.textContent='none';
+    s.style.color='var(--mt)';
+  }
+  // Nothing saved means nothing to apply or remove. Greyed rather than hidden, so
+  // the panel does not change shape under the operator's thumb.
+  [['applyBiasBtn',savedBias.saved],['remBiasBtn',savedBias.saved]].forEach(([id,on])=>{
+    const b=E(id); b.disabled=!on; b.style.opacity=on?'1':'.4';
+  });
+}
+
 function refreshOffset(){
   E('offVal').textContent = biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m';
   const b=E('offsetBtn');
@@ -1044,6 +1082,40 @@ function refreshOffset(){
   // Re-solve silently so the green marker moves the instant the bias changes.
   if(targetMark) computeAim(true);
   try{ drawOverlay(); }catch(e){}
+}
+
+// Read what this device has stored. Failure is not an error worth shouting about
+// on startup — it means nothing is saved yet, or this is an older build without
+// the endpoint — but it must not leave a stale figure on screen either.
+async function loadBias(){
+  try{
+    const r=await fetch('/api/bias');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    savedBias={saved:!!j.saved, down:Number(j.down)||0, cross:Number(j.cross)||0, savedAt:Number(j.savedAt)||0};
+  }catch(e){
+    savedBias={saved:false, down:0, cross:0, savedAt:0};
+  }
+  refreshSaved();
+}
+loadBias();
+
+// Returns null on success or a message. The caller decides what to do about a
+// failure — for SET the correction still applies to this sortie even if writing
+// it to the device failed, and saying so beats pretending it saved.
+async function persistBias(down, cross){
+  try{
+    const r=await fetch('/api/bias',{method:'POST',headers:{'Content-Type':'application/json'},
+                                     body:JSON.stringify({down:down, cross:cross})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok || !j.ok) return (j && j.err) ? j.err : ('could not save (HTTP '+r.status+')');
+    if(j.bias) savedBias={saved:!!j.bias.saved, down:Number(j.bias.down)||0,
+                          cross:Number(j.bias.cross)||0, savedAt:Number(j.bias.savedAt)||0};
+    refreshSaved();
+    return null;
+  }catch(e){
+    return 'could not reach the app to save it ('+e.message+')';
+  }
 }
 
 function disarmShot(){
@@ -1138,7 +1210,8 @@ function recordImpact(ix, iy){
 
 E('offsetBtn').addEventListener('click', ()=>{ offsetOn=!offsetOn; refreshOffset(); });
 
-E('setOffBtn').addEventListener('click', ()=>{
+// SET: fold the measured miss into the bias AND save it to the device.
+E('setOffBtn').addEventListener('click', async ()=>{
   if(!lastMiss){ showBanner('Mark an impact first'); hideBanner(2200); return; }
   // Shift the aim by the NEGATIVE of the measured miss, so the next round
   // centres. It accumulates, so repeated sighting shots converge rather than
@@ -1150,16 +1223,49 @@ E('setOffBtn').addEventListener('click', ()=>{
   // correction twice and throw the aim out by the amount it just fixed.
   lastMiss=null;
   refreshOffset();
-  offStatus('Offset now <b>'+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m</b> (down/cross). Fly the next round on the green marker.','ok');
+  const here='Offset now <b>'+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m</b> (down/cross). Fly the next round on the green marker.';
   showBanner('OFFSET SET '+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m'); hideBanner(2600);
+  offStatus(here+'<br>saving…','warn');
+  const err=await persistBias(biasDown, biasCross);
+  // The correction is already in the aim either way. Failing to write it only
+  // means it will not be there after a restart, and the operator has to know
+  // that rather than discover it on the next sortie.
+  if(err) offStatus(here+'<br><span style="color:var(--rd)">NOT saved on the device: '+err+' — it will be lost when the app closes.</span>','warn');
+  else    offStatus(here+'<br>Saved on this device ('+stamp(savedBias.savedAt)+'). It will still be here after a power cycle.','ok');
 });
 
-E('offClrBtn').addEventListener('click', ()=>{
+// APPLY SAVED: put the stored registration back into the aim.
+E('applyBiasBtn').addEventListener('click', ()=>{
+  if(!savedBias.saved){ showBanner('No bias saved on this device'); hideBanner(2200); return; }
+  biasDown=savedBias.down; biasCross=savedBias.cross;
+  offsetOn=true;
+  // The saved figure replaces whatever was in the aim, so a miss measured
+  // against the old one no longer means anything.
+  lastMiss=null;
+  refreshOffset();
+  offStatus('Applied the saved bias <b>'+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m</b> (down/cross), measured '+stamp(savedBias.savedAt)+'.<br>Check it against a sighting shot if the payload lot or the airframe has changed since.','ok');
+  showBanner('SAVED BIAS APPLIED '+biasDown.toFixed(1)+' / '+biasCross.toFixed(1)+' m'); hideBanner(2600);
+});
+
+// REMOVE BIAS: out of the aim and off the device.
+E('remBiasBtn').addEventListener('click', async ()=>{
   biasDown=0; biasCross=0; offsetOn=false; lastMiss=null;
   disarmShot();
   refreshOffset();
-  E('offR').classList.remove('show');
-  showBanner('OFFSET CLEARED'); hideBanner(1800);
+  try{
+    const r=await fetch('/api/bias',{method:'POST',headers:{'Content-Type':'application/json'},
+                                     body:JSON.stringify({clear:true})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok || !j.ok) throw new Error((j && j.err) || ('HTTP '+r.status));
+    savedBias={saved:false, down:0, cross:0, savedAt:0};
+    refreshSaved();
+    E('offR').classList.remove('show');
+    showBanner('BIAS REMOVED'); hideBanner(1800);
+  }catch(e){
+    // The aim is already clean; it is the stored copy that may still be there.
+    offStatus('The aim is back to the model, but the saved bias could not be deleted from the device ('+e.message+'). It will be offered again after a restart.','err');
+    showBanner('BIAS OFF — BUT STILL SAVED ON DEVICE'); hideBanner(3000);
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════
@@ -1447,7 +1553,15 @@ E('setSave').addEventListener('click', ()=>{
   }, 'Saving…');
 });
 
-E('setReset').addEventListener('click', ()=>postSettings({reset:true}, 'Restoring defaults…'));
+// Restoring defaults clears the saved registration along with everything else, so
+// the REGISTRATION panel has to be re-read or it keeps offering a bias that the
+// device no longer holds.
+E('setReset').addEventListener('click', async ()=>{
+  await postSettings({reset:true}, 'Restoring defaults…');
+  biasDown=0; biasCross=0; offsetOn=false; lastMiss=null;
+  disarmShot(); refreshOffset();
+  await loadBias();
+});
 
 // Setup check for the collector. Sends one marker record by the real upload
 // path, so a mismatched token or a wrong URL is found while standing at the
