@@ -238,12 +238,16 @@ select,input[type=text]{background:var(--bg);border:1px solid var(--bd);color:va
   </div></div>
 
   <div class="sec"><div class="sh">🌬 WIND OVERRIDE</div><div class="sb">
-    <div style="font-size:9px;color:var(--mt);line-height:1.4">FC wind used when available.</div>
+    <!-- The two sources are measured at different heights and the solver has to
+         know which is which — see getWind(). Saying so here stops an operator
+         "correcting" the FC reading to match a slider that means something
+         else. -->
+    <div style="font-size:9px;color:var(--mt);line-height:1.4">FC wind used when available — that is the wind <b>at the aircraft</b>. The slider and FETCH are the wind <b>at 10 m</b>. The solver converts between them using the terrain setting.</div>
     <div class="hrow">
       <input type="text" id="wLoc" placeholder="City" value="Jaipur" style="flex:1">
       <button class="btn btn-gd" id="fetchW" style="width:auto;padding:4px 8px">FETCH</button>
     </div>
-    <div class="f"><label>Speed <span id="wsL">0 m/s</span></label><input type="range" id="ws" min="0" max="20" value="0" step="0.1"></div>
+    <div class="f"><label>Speed at 10 m <span id="wsL">0 m/s</span></label><input type="range" id="ws" min="0" max="20" value="0" step="0.1"></div>
     <div class="f"><label>Direction FROM °T <span id="wdL">0°</span></label><input type="range" id="wd" min="0" max="359" value="0" step="1"></div>
   </div></div>
 
@@ -689,27 +693,67 @@ function getRho(altAGL){
   return Pa/(R*Ta);
 }
 
-function windAtAlt(v10,z){
-  const z0=parseFloat(V('tr'));
-  return z<=z0?0:v10*Math.log(z/z0)/Math.log(10/z0);
+// Terrain roughness for the log wind profile. Read through a guard because
+// everything below divides by log(10/z0): zero or anything at or above 10 m
+// makes that zero or negative and the whole profile meaningless. The select
+// only offers 0.0002 to 0.5, so this is insurance, not a live case.
+function z0(){
+  const v=parseFloat(V('tr'));
+  return (isFinite(v) && v>0 && v<10) ? v : 0.03;
 }
 
-function getWind(){
+// Wind speed at height z, given the speed at the 10 m reference height.
+function windAtAlt(v10,z){
+  const r=z0();
+  return z<=r?0:v10*Math.log(z/r)/Math.log(10/r);
+}
+
+// The inverse: a wind MEASURED at height z, expressed at the 10 m reference.
+// windAtAlt(windTo10m(v,z), z) === v exactly, which is what keeps the aircraft's
+// own wind reading intact after the round trip.
+function windTo10m(vz,z){
+  const r=z0();
+  if(!(z>r)) return vz;          // below the roughness height: not invertible
+  return vz*Math.log(10/r)/Math.log(z/r);
+}
+
+/**
+ * The two wind sources do NOT mean the same thing, and treating them alike was
+ * costing real accuracy:
+ *
+ *   FC      EKF3's estimate is the wind where the AIRCRAFT is — at altitude.
+ *   MANUAL  The slider and the FETCH weather lookup are 10 m figures, which is
+ *           the height met stations report at.
+ *
+ * The fall model works from a 10 m reference and scales up through the column,
+ * so an FC reading handed to it unchanged was treated as a ground wind and then
+ * scaled up AGAIN. At 100 m over open desert that is 1.4x the real wind, aimed
+ * too far upwind, every round landing short — and worse the higher you drop.
+ *
+ * So: `speed` is what the source actually reported, for display and for logging.
+ * `ref10` is that figure expressed at 10 m, which is what the solver wants.
+ * `atAlt` is the height `speed` was measured at.
+ */
+function getWind(aircraftAlt){
   const fc=telemetry.windSpeed, fd=telemetry.windDir;
+  const haveFc = (fc!==null && fc>0.1);
   const ms=parseFloat(V('ws')), md=parseFloat(V('wd'));
+  const alt = (isFinite(aircraftAlt) && aircraftAlt>0) ? aircraftAlt : 10;
   return{
-    speed: (fc!==null&&fc>0.1)?fc:ms,
-    dir:   (fc!==null&&fc>0.1)?fd:md,
-    src:   (fc!==null&&fc>0.1)?'FC':'MANUAL',
+    speed: haveFc?fc:ms,
+    dir:   haveFc?fd:md,
+    src:   haveFc?'FC':'MANUAL',
+    atAlt: haveFc?alt:10,
+    ref10: haveFc?windTo10m(fc,alt):ms,
   };
 }
 
 // Single-phase drop: one drag regime (cd, area) for the whole fall.
-function rk4Drop(h,mass,cd,area,initVx,wSpd){
+function rk4Drop(h,mass,cd,area,initVx,w10){
   let x=0,y=h,vvx=initVx,vy=0,t=0;
   const acc=(vvx,vy,y)=>{
     const rho=getRho(Math.max(0,y));
-    const wL=windAtAlt(wSpd,Math.max(0.1,y));
+    const wL=windAtAlt(w10,Math.max(0.1,y));
     // relVx: payload velocity minus wind velocity (both in downwind direction)
     // wind blows in +x (downwind), so relative = vx - wind
     const rx=vvx-wL, ry=vy;
@@ -735,11 +779,11 @@ function rk4Drop(h,mass,cd,area,initVx,wSpd){
 // 0.1 m/s wind — both far below sensor noise). Frees the frame budget for the
 // live feed without changing the aim point the operator sees.
 let _rk4Key=null, _rk4Val=null;
-function rk4DropCached(h,mass,cd,area,initVx,wSpd){
-  const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(wSpd*10),
+function rk4DropCached(h,mass,cd,area,initVx,w10){
+  const key=[Math.round(h*2),mass,cd,area,Math.round(initVx*100),Math.round(w10*10),
              V('tmp'),V('el'),V('tr')].join('|');
   if(key===_rk4Key && _rk4Val) return _rk4Val;
-  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,wSpd);
+  _rk4Key=key; _rk4Val=rk4Drop(h,mass,cd,area,initVx,w10);
   return _rk4Val;
 }
 
@@ -755,17 +799,22 @@ function computeAim(silent=false){
   const dCd=parseFloat(V('dc'));
   const camFwd=parseFloat(V('cf'));
   const camRt=parseFloat(V('cr'));
-  const {speed:wSpd,dir:wDir,src:wSrc}=getWind();
+  const {speed:wSpd,dir:wDir,src:wSrc,ref10:w10,atAlt:wAtAlt}=getWind(height);
 
-  // Hover tilt: drone tilts downwind to hold position
+  // Hover tilt: drone tilts downwind to hold position. The drone is up at
+  // `height`, so this is the wind THERE, not the 10 m figure — which for an FC
+  // reading is exactly what the source gave us, and for a manual one has to be
+  // scaled up the profile.
+  const wAircraft=windAtAlt(w10,height);
   const rhoMid=getRho(height/2);
-  const Fd=0.5*rhoMid*wSpd*wSpd*dCd*dArea;
+  const Fd=0.5*rhoMid*wAircraft*wAircraft*dCd*dArea;
   const tiltRad=Math.atan(Fd/(dMass*G));
   // At release, payload gets small downwind kick from pendulum effect
   const initVel=G*Math.sin(tiltRad)*0.05;
 
-  // RK4 simulation — single drag regime, drift is positive (downwind direction)
-  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,wSpd);
+  // RK4 simulation — single drag regime, drift is positive (downwind direction).
+  // Fed the 10 m reference: the model scales it up the column itself.
+  const {drift,tof}=rk4DropCached(height,mass,cd,area,initVel,w10);
 
   // ── COORDINATE TRANSFORM ──────────────────────────────────────
   // Convert downwind drift to North/East world coordinates
@@ -829,6 +878,7 @@ function computeAim(silent=false){
   };
 
   result={drift,tof,dNorth,dEast,aimCamUp,aimCamRt,height,wSpd,wDir,wSrc,tiltDeg:tiltRad*180/PI,pxPerM,
+          w10,wAtAlt,wAircraft,
           offApplied, biasDown, biasCross};
 
   // Update HUD
@@ -2000,7 +2050,8 @@ function updateResult(){
   b.innerHTML=`<b>⬤ FLY 🔵 ONTO 🟢 → DROP</b><br>
     Drift: ${result.drift.toFixed(2)}m  TOF: ${result.tof.toFixed(2)}s<br>
     Alt: ${result.height.toFixed(0)}m  Tilt: ${result.tiltDeg.toFixed(1)}°<br>
-    Wind: ${result.wSpd.toFixed(1)}m/s ${result.wDir.toFixed(0)}° [${result.wSrc}]`;
+    Wind: ${result.wSpd.toFixed(1)}m/s ${result.wDir.toFixed(0)}° [${result.wSrc}@${result.wAtAlt.toFixed(0)}m]<br>
+    <span style="color:var(--mt)">= ${result.w10.toFixed(1)}m/s at 10m — the fall is solved on this</span>`;
 }
 
 function showBanner(msg){const b=E('banner');b.textContent=msg;b.classList.remove('hide');}
